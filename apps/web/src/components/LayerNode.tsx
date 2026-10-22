@@ -17,6 +17,8 @@ import { useEditorStore } from "../store/editorStore";
 import { ensureFontLoaded } from "../utils/fonts";
 import { roundedPolygonPath, shapePoints } from "../utils/rounded-path";
 import { traceFramePath } from "../utils/frames";
+import { gradientFillProps } from "../utils/gradients";
+import { imageLookSceneFunc } from "../utils/image-filters";
 
 interface LayerNodeProps {
   layer: Layer;
@@ -395,6 +397,7 @@ function ImageNode({ layer, registerRef }: { layer: ImageLayer } & LayerNodeProp
       width={layer.width}
       height={layer.height}
       crop={layer.crop}
+      sceneFunc={imageLookSceneFunc(layer)}
       {...shadowProps(layer.shadow)}
       {...common}
     />
@@ -409,6 +412,7 @@ function RectNode({ layer, registerRef }: { layer: RectLayer } & LayerNodeProps)
       width={layer.width}
       height={layer.height}
       fill={layer.fill}
+      {...gradientFillProps(layer.gradient, layer.width, layer.height)}
       cornerRadius={layer.cornerRadius}
       {...strokeProps(layer.stroke)}
       {...shadowProps(layer.shadow)}
@@ -449,6 +453,7 @@ function ShapeNode({ layer, registerRef }: { layer: ShapeLayer } & LayerNodeProp
   const shared = {
     ref: setRefs,
     fill: layer.fill,
+    ...gradientFillProps(layer.gradient, layer.width, layer.height),
     ...strokeProps(layer.stroke),
     ...shadowProps(layer.shadow),
     ...common,
@@ -469,6 +474,7 @@ function ShapeNode({ layer, registerRef }: { layer: ShapeLayer } & LayerNodeProp
             radiusX={w / 2}
             radiusY={h / 2}
             fill={layer.fill}
+            {...gradientFillProps(layer.gradient, w, h, -w / 2, -h / 2)}
             {...strokeProps(layer.stroke)}
             {...shadowProps(layer.shadow)}
           />
@@ -576,6 +582,10 @@ function FrameNode({ layer, registerRef }: { layer: FrameLayer } & LayerNodeProp
               y={content.offsetY}
               scaleX={content.scale}
               scaleY={content.scale}
+              sceneFunc={imageLookSceneFunc(layer, {
+                x: (layer.width / 2 - content.offsetX) / content.scale,
+                y: (layer.height / 2 - content.offsetY) / content.scale,
+              })}
               listening={false}
             />
           )

@@ -38,11 +38,15 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 - Move, resize, rotate, and multi-select with marquee (click-drag on empty canvas);
   group/ungroup (`Cmd/Ctrl+G`), with collapsible group rows in the layers panel.
 - Smart guides: snapping to other layers' edges and centers and to the canvas
-  center while dragging.
+  center while dragging. Optional grid (`'`) with snap-to-grid, both in the
+  View menu.
+- Align selected items to each other and space 3+ items evenly (Arrange panel;
+  groups move as one).
 - Copy/paste (`Cmd/Ctrl+C` / `Cmd/Ctrl+V`), duplicate (`Cmd/Ctrl+D`), undo/redo,
   arrow-key nudge, align-to-page (horizontal and vertical independently), z-order
   controls, layer locking (`Cmd/Ctrl+Shift+L`), right-click context menus, and
-  hover outlines that preview what you're about to select.
+  hover outlines that preview what you're about to select. Press `?` for the
+  full shortcut list.
 - Corner handles scale proportionally; side handles resize the container
   (text re-wraps, images crop) with a live preview.
 
@@ -62,6 +66,8 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 - "Document colors": swatches of every color already used in the design.
 - "Photo colors": 5-color palettes extracted from each image on the canvas,
   ranked so the dominant image's palette comes first.
+- Linear and radial gradients (with presets and up to 4 stops) on the
+  background, rectangles and shapes.
 
 **AI tools (100% local, in-browser)**
 
@@ -80,11 +86,16 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   canvas edge sets the image as the full-canvas background.
 - A reusable Uploads library per installation, with original filenames kept.
 - Image cropping via side handles; corner radius on shapes and frames.
+- Non-destructive image looks: filter presets (Vivid, Warm, Mono, …),
+  brightness, contrast, saturation, hue and blur, plus flip horizontal/vertical.
+  Works on images and framed photos and stays sharp at any export size.
 
 **Projects & export**
 
-- Project list with thumbnails, duplicate and delete.
-- Aspect-ratio presets for new designs: 1:1, 16:9, 9:16, 21:9, 9:21, 4:3, 3:4.
+- Project list with thumbnails, search, duplicate and delete.
+- New designs from aspect-ratio presets, platform sizes (YouTube, Instagram,
+  X, LinkedIn, A4) or any custom size up to 8192 px.
+- Templates: four built-in starters, and "Save as template" for your own.
 - Export to PNG or JPG at 0.25x–3x resolution with a JPG quality slider and a live
   file-size estimate — handy when a platform rejects an upload for being too heavy.
 - Debounced autosave with thumbnails; refresh-safe.
@@ -93,7 +104,11 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 ## Layout
 
 - `apps/server` — Hono API. Data lives in `apps/server/data/` (`designs/*.json`,
-  `assets/*`, `settings.json`). Back it up or git-track it if you like.
+  `templates/*.json`, `assets/*`, `settings.json`), or in `MYCANVAS_DATA_DIR`
+  when set. Back it up or git-track it if you like. In production it also serves
+  the built web app.
+- `Dockerfile` + `docker-compose.coolify.yml` — single-container deployment
+  (used on Coolify); `ops/traefik/` holds the LAN-only HTTPS route.
 - `apps/web` — React + react-konva editor (Vite).
 - `packages/shared` — types, aspect-ratio presets, curated Google Fonts list.
 

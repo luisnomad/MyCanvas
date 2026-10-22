@@ -8,8 +8,11 @@ import { Inspector } from "../components/Inspector";
 import { LayersPanel } from "../components/LayersPanel";
 import { LeftToolbar } from "../components/LeftToolbar";
 import { SaveTemplateButton } from "../components/SaveTemplateButton";
+import { ShortcutsDialog } from "../components/ShortcutsDialog";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { ViewMenu } from "../components/ViewMenu";
 import { useEditorStore } from "../store/editorStore";
+import { useViewSettings } from "../store/viewSettings";
 import { makeDesignThumbnail } from "../utils/canvas-bridge";
 
 export function Editor({ designId }: { designId: string }) {
@@ -22,6 +25,7 @@ export function Editor({ designId }: { designId: string }) {
   const [fitScale, setFitScale] = useState(1);
   const [zoom, setZoom] = useState<number | null>(null);
   const [showExport, setShowExport] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [textPropertiesRequest, setTextPropertiesRequest] = useState(0);
 
   const loadDesign = useEditorStore((state) => state.loadDesign);
@@ -70,6 +74,17 @@ export function Editor({ designId }: { designId: string }) {
         return;
       }
       if (inField || !state.design) {
+        return;
+      }
+      if (!mod && e.key === "?") {
+        e.preventDefault();
+        setShowShortcuts((prev) => !prev);
+        return;
+      }
+      if (!mod && e.key === "'") {
+        e.preventDefault();
+        const view = useViewSettings.getState();
+        view.setView({ showGrid: !view.showGrid });
         return;
       }
       const hasSelection = state.selectedLayerIds.length > 0;
@@ -263,6 +278,17 @@ export function Editor({ designId }: { designId: string }) {
             <CanvasStage design={design} scale={effectiveScale} onFitScale={handleFitScale} />
           </div>
           <div className="editor-bottom">
+            <button
+              type="button"
+              className="secondary"
+              title="Keyboard shortcuts (?)"
+              aria-label="Keyboard shortcuts"
+              onClick={() => { setShowShortcuts(true); }}
+            >
+              ?
+            </button>
+            <ViewMenu />
+            <span className="top-bar-spacer" />
             <input
               type="range"
               className="zoom-slider"
@@ -299,6 +325,13 @@ export function Editor({ designId }: { designId: string }) {
         <ExportDialog
           onClose={() => {
             setShowExport(false);
+          }}
+        />
+      )}
+      {showShortcuts && (
+        <ShortcutsDialog
+          onClose={() => {
+            setShowShortcuts(false);
           }}
         />
       )}

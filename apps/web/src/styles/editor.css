@@ -141,6 +141,9 @@
 .panel-bottom {
   border-top: 1px solid var(--border);
   padding: 14px;
+  /* The gradient editor is tall; never let it crowd out the panel above. */
+  max-height: 45%;
+  overflow-y: auto;
 }
 
 .panel-bottom .panel-section {
@@ -1190,4 +1193,242 @@ input.bg-color {
   white-space: nowrap;
   border-bottom-left-radius: var(--radius);
   border-bottom-right-radius: var(--radius);
+}
+
+/* Image adjustments (inspector) */
+
+.filter-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.filter-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 4px 5px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.filter-tile img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+}
+
+.filter-tile.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.button-row {
+  display: flex;
+  gap: 6px;
+}
+
+.inspector .panel-body .button-row button.secondary {
+  flex: 1;
+  padding-left: 6px;
+  padding-right: 6px;
+  font-size: 12px;
+}
+
+.inspector button.secondary.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* Solid / gradient fill */
+
+.fill-field {
+  margin-bottom: 10px;
+}
+
+.fill-field.disabled {
+  opacity: 0.55;
+}
+
+.fill-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inner);
+}
+
+.segmented button {
+  border: none;
+  background: transparent;
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.segmented button.active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+}
+
+.gradient-presets {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.gradient-swatch {
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+
+.gradient-preview {
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.gradient-stop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gradient-stop .field {
+  flex: 1;
+  margin-bottom: 6px;
+}
+
+.gradient-stop-remove {
+  padding: 0 6px;
+  line-height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+}
+
+/* Arrange (multi-select) */
+
+.arrange-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.icon-tile {
+  display: grid;
+  place-items: center;
+  height: 30px;
+  padding: 0;
+  color: var(--text);
+}
+
+.icon-tile:hover {
+  color: var(--accent);
+}
+
+.button-row button.secondary svg {
+  vertical-align: -3px;
+}
+
+/* View menu + shortcuts */
+
+.view-menu {
+  position: relative;
+}
+
+.view-menu-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  width: 210px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.view-menu-popover .field {
+  margin-bottom: 0;
+}
+
+.view-menu-popover kbd,
+.shortcuts-dialog kbd {
+  margin-left: auto;
+  padding: 1px 6px;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-secondary);
+  background: var(--surface-inner);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.editor-bottom .top-bar-spacer {
+  flex: 1;
+}
+
+.shortcuts-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px 28px;
+}
+
+.shortcuts-grid h3 {
+  margin: 8px 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.shortcuts-grid dl {
+  margin: 0;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.shortcut-row dd {
+  margin: 0;
 }

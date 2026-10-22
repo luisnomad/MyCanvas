@@ -1,6 +1,9 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+// MYCANVAS_API_PORT lets a second dev instance run next to the default one.
+const api = `http://localhost:${process.env.MYCANVAS_API_PORT ?? "3001"}`;
+
 export default defineConfig({
   plugins: [react()],
   // Uploaded images are served at /assets/*, so built files live elsewhere.
@@ -8,8 +11,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:3001",
-      "/assets": "http://localhost:3001",
+      "/api": api,
+      "/assets": api,
     },
   },
 });

@@ -1,12 +1,14 @@
 import Konva from "konva";
 import { type DragEvent as ReactDragEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Arc, Group, Image as KonvaImage, Layer, Line, Path, Rect, Stage, Transformer } from "react-konva";
+import { Arc, Group, Image as KonvaImage, Layer, Line, Path, Rect, Shape, Stage, Transformer } from "react-konva";
 import { type Design, type FrameContent, type Layer as EditorLayer } from "@mycanvas/shared";
 import { api } from "../api";
 import { useEditorStore, primarySelectedId } from "../store/editorStore";
 import { getCachedImageSize, useImage } from "../hooks/useImage";
 import { useTheme } from "../utils/theme";
 import { setCanvasBridge } from "../utils/canvas-bridge";
+import { gradientFillProps } from "../utils/gradients";
+import { useViewSettings } from "../store/viewSettings";
 import {
   clampContent,
   coverContent,
@@ -292,6 +294,8 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
   // Neutral gray for the unified multi-select boundary (distinct from accent).
   const neutralLine = theme === "dark" ? "#9a9aa5" : "#6e6e7a";
   const editingTextLayerId = useEditorStore((state) => state.editingTextLayerId);
+  const showGrid = useViewSettings((state) => state.showGrid);
+  const gridSize = useViewSettings((state) => state.gridSize);
   const editingFrameId = useEditorStore((state) => state.editingFrameId);
   /** Accent outline rect for the frame content-edit mode (no anchors). */
   const [contentEditBox, setContentEditBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -369,8 +373,20 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
         guideTargetsRef.current = { vertical, horizontal };
       });
       node.on("dragmove.guides", () => {
+        const view = useViewSettings.getState();
+        let rect = node.getClientRect({ skipShadow: true });
+        if (view.snapToGrid && view.gridSize > 0) {
+          // Snap the rendered top-left corner to the grid; guides may refine.
+          const size = view.gridSize;
+          node.x(node.x() + Math.round(rect.x / size) * size - rect.x);
+          node.y(node.y() + Math.round(rect.y / size) * size - rect.y);
+          rect = node.getClientRect({ skipShadow: true });
+        }
+        if (!view.smartGuides) {
+          hideGuides();
+          return;
+        }
         const threshold = 5 / scaleRef.current;
-        const rect = node.getClientRect({ skipShadow: true });
         const xs = [rect.x, rect.x + rect.width / 2, rect.x + rect.width];
         const ys = [rect.y, rect.y + rect.height / 2, rect.y + rect.height];
         let bestV: { delta: number; line: number } | null = null;
@@ -1352,6 +1368,7 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
                   width={design.width}
                   height={design.height}
                   fill={design.background}
+                  {...gradientFillProps(design.backgroundGradient, design.width, design.height)}
                 />
               )}
               {design.layers.map((layer) => (
@@ -1359,6 +1376,26 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
               ))}
             </Layer>
             <Layer>
+              {showGrid && gridSize > 0 && (
+                <Shape
+                  listening={false}
+                  stroke={accentColor}
+                  strokeWidth={1 / scale}
+                  opacity={0.22}
+                  sceneFunc={(ctx, shape) => {
+                    ctx.beginPath();
+                    for (let x = gridSize; x < design.width; x += gridSize) {
+                      ctx.moveTo(x, 0);
+                      ctx.lineTo(x, design.height);
+                    }
+                    for (let y = gridSize; y < design.height; y += gridSize) {
+                      ctx.moveTo(0, y);
+                      ctx.lineTo(design.width, y);
+                    }
+                    ctx.strokeShape(shape);
+                  }}
+                />
+              )}
               {memberBoxes.length > 0 && (
                 <>
                   {memberBoxes.length > 1 && (

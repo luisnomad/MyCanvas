@@ -1,6 +1,7 @@
 import {
   type Design,
   type FrameLayer,
+  type GradientFill,
   type ImageLayer,
   type Layer,
   type LineLayer,
@@ -19,6 +20,7 @@ export type LoadStatus = "loading" | "ready" | "not-found" | "error";
 interface Snapshot {
   layers: Layer[];
   background: string;
+  backgroundGradient?: GradientFill;
 }
 
 /** Any subset of layer-specific fields; only the keys matching the layer type are applied in practice. */
@@ -59,6 +61,8 @@ export interface EditorStore {
   setEditingGroup: (id: string | null) => void;
   setName: (name: string) => void;
   setBackground: (background: string, transient?: boolean) => void;
+  /** Solid background when undefined. */
+  setBackgroundGradient: (gradient: GradientFill | undefined, transient?: boolean) => void;
   addLayer: (layer: Layer) => void;
   /** Insert a layer at a z-index, select it, one history entry. */
   addLayerAt: (layer: Layer, index: number) => void;
@@ -160,6 +164,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
   const snapshotOf = (design: Design): Snapshot => ({
     layers: structuredClone(design.layers),
     background: design.background,
+    backgroundGradient: structuredClone(design.backgroundGradient),
   });
 
   const markDirty = () => {
@@ -361,6 +366,10 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
 
     setBackground: (background, transient = false) => {
       mutate((design) => ({ layers: design.layers, background }), transient);
+    },
+
+    setBackgroundGradient: (backgroundGradient, transient = false) => {
+      mutate((design) => ({ layers: design.layers, background: design.background, backgroundGradient }), transient);
     },
 
     addLayer: (layer) => {
@@ -803,7 +812,12 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       set({
         past: state.past.slice(0, -1),
         future: [...state.future, snapshotOf(design)],
-        design: { ...design, layers: previous.layers, background: previous.background },
+        design: {
+          ...design,
+          layers: previous.layers,
+          background: previous.background,
+          backgroundGradient: previous.backgroundGradient,
+        },
       });
       markDirty();
     },
@@ -818,7 +832,12 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       set({
         future: state.future.slice(0, -1),
         past: [...state.past, snapshotOf(design)],
-        design: { ...design, layers: next.layers, background: next.background },
+        design: {
+          ...design,
+          layers: next.layers,
+          background: next.background,
+          backgroundGradient: next.backgroundGradient,
+        },
       });
       markDirty();
     },

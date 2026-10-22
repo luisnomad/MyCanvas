@@ -81,6 +81,32 @@ export interface TextLayer extends LayerBase {
   stroke: StrokeEffect;
 }
 
+export type ImageFilterPreset = "none" | "mono" | "noir" | "sepia" | "vintage" | "warm" | "cool" | "vivid" | "fade";
+
+/** Non-destructive image look, applied at render time. Absent/0 = unchanged. */
+export interface ImageAdjustments {
+  preset?: ImageFilterPreset;
+  /** -100…100 */
+  brightness?: number;
+  /** -100…100 */
+  contrast?: number;
+  /** -100…100 */
+  saturation?: number;
+  /** Hue rotation in degrees, -180…180. */
+  hue?: number;
+  /** Blur radius in design px (scales with the layer), 0…50. */
+  blur?: number;
+}
+
+/** Gradient fill; overrides the solid fill while present. */
+export interface GradientFill {
+  type: "linear" | "radial";
+  /** Linear direction in degrees: 0 = left→right, 90 = top→bottom. */
+  angle: number;
+  /** Two or more stops, offsets 0…1, ascending. */
+  stops: { offset: number; color: string }[];
+}
+
 export interface ImageCrop {
   x: number;
   y: number;
@@ -99,6 +125,10 @@ export interface ImageLayer extends LayerBase {
   /** True when the asset is an isolated-subject cutout (from remove-background
    *  or text-behind-subject) — subject extraction is meaningless on it. */
   cutout?: boolean;
+  adjust?: ImageAdjustments;
+  /** Mirror the picture inside the layer box (geometry is unchanged). */
+  flipX?: boolean;
+  flipY?: boolean;
   shadow: ShadowEffect;
 }
 
@@ -107,6 +137,7 @@ export interface RectLayer extends LayerBase {
   width: number;
   height: number;
   fill: string;
+  gradient?: GradientFill;
   cornerRadius: number;
   stroke: StrokeEffect;
   shadow: ShadowEffect;
@@ -129,6 +160,7 @@ export interface ShapeLayer extends LayerBase {
   width: number;
   height: number;
   fill: string;
+  gradient?: GradientFill;
   /** Rounded corners (px). Optional/0 = sharp; meaningless on circles. */
   cornerRadius?: number;
   stroke: StrokeEffect;
@@ -155,6 +187,9 @@ export interface FrameLayer extends LayerBase {
   cornerRadius?: number;
   /** Absent = empty frame (renders the placeholder illustration). */
   content?: FrameContent;
+  adjust?: ImageAdjustments;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 export type Layer = TextLayer | ImageLayer | RectLayer | LineLayer | ShapeLayer | FrameLayer;
@@ -167,6 +202,8 @@ export interface Design {
   height: number;
   /** Canvas background color, or "transparent". */
   background: string;
+  /** Overrides `background` when present (ignored while transparent). */
+  backgroundGradient?: GradientFill;
   /** Layers in z-order: index 0 is the bottom-most layer. */
   layers: Layer[];
   /** Small data-URL preview rendered by the editor on save. */

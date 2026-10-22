@@ -15,7 +15,7 @@ import { getCachedImageSize } from "../hooks/useImage";
 import { newLayerId, primarySelectedId, useEditorStore } from "../store/editorStore";
 import { ensureFontLoaded } from "../utils/fonts";
 import { ASSET_DRAG_MIME, framePathData, setCurrentAssetDrag } from "../utils/frames";
-import { ColorInput } from "./ColorInput";
+import { FillField } from "./inspector/FillField";
 import { Panel } from "./inspector/Panel";
 import { TextContentSection } from "./inspector/TextContentSection";
 import { TextEffectsSection } from "./inspector/TextEffectsSection";
@@ -64,6 +64,7 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
   const addImageLayer = useEditorStore((state) => state.addImageLayer);
   const updateLayer = useEditorStore((state) => state.updateLayer);
   const setBackground = useEditorStore((state) => state.setBackground);
+  const setBackgroundGradient = useEditorStore((state) => state.setBackgroundGradient);
   const commitTransient = useEditorStore((state) => state.commitTransient);
 
   const assetsVersion = useEditorStore((state) => state.assetsVersion);
@@ -530,29 +531,28 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
         <div className="panel-bottom">
           <div className="panel-section">
             <h3>Background</h3>
-            <div className="field-row">
-              <ColorInput
-                compact
-                label="Background color"
-                value={transparent ? lastBgColor : design.background}
-                disabled={transparent}
-                onChange={(color) => {
-                  setLastBgColor(color);
-                  setBackground(color, true);
+            <FillField
+              label="Fill"
+              color={transparent ? lastBgColor : design.background}
+              gradient={transparent ? undefined : design.backgroundGradient}
+              disabled={transparent}
+              onColor={(color, transient) => {
+                setLastBgColor(color);
+                setBackground(color, transient);
+              }}
+              onGradient={setBackgroundGradient}
+              onCommit={commitTransient}
+            />
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={transparent}
+                onChange={(e) => {
+                  setBackground(e.target.checked ? "transparent" : lastBgColor);
                 }}
-                onCommit={commitTransient}
               />
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={transparent}
-                  onChange={(e) => {
-                    setBackground(e.target.checked ? "transparent" : lastBgColor);
-                  }}
-                />
-                Transparent
-              </label>
-            </div>
+              Transparent
+            </label>
           </div>
         </div>
       </div>

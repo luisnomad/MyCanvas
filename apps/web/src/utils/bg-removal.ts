@@ -245,10 +245,14 @@ async function trimCutout(blob: Blob): Promise<{
  * Maps a trimmed cutout back onto the source layer: the bbox (in cutout
  * pixels) is scaled into the layer's local frame, then pushed through the
  * layer's scale/rotation so the trimmed content lands exactly where it was.
+ * A flipped layer draws its pixels mirrored, so the bbox is mirrored too.
  */
 function cutoutFrame(layer: ImageLayer, result: CutoutResult) {
-  const localX = (result.bbox.x / result.frameWidth) * layer.width;
-  const localY = (result.bbox.y / result.frameHeight) * layer.height;
+  const { bbox } = result;
+  const bboxX = layer.flipX ? result.frameWidth - bbox.x - bbox.width : bbox.x;
+  const bboxY = layer.flipY ? result.frameHeight - bbox.y - bbox.height : bbox.y;
+  const localX = (bboxX / result.frameWidth) * layer.width;
+  const localY = (bboxY / result.frameHeight) * layer.height;
   const rad = (layer.rotation * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -376,6 +380,10 @@ export async function textBehindSubject(layer: ImageLayer): Promise<void> {
     width: frame.width,
     height: frame.height,
     cutout: true,
+    // Same look as the photo, or the cutout would stand out from it.
+    adjust: structuredClone(layer.adjust),
+    flipX: layer.flipX,
+    flipY: layer.flipY,
     shadow: defaultShadow(),
   };
   store.addLayerAt(cutout, insertAt);

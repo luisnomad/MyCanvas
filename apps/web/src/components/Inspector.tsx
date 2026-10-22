@@ -1,6 +1,8 @@
 import { type Layer } from "@mycanvas/shared";
 import { type LayerPatch, useEditorStore } from "../store/editorStore";
+import { AdjustSection } from "./inspector/AdjustSection";
 import { AiToolsSection } from "./inspector/AiToolsSection";
+import { ArrangeSection } from "./inspector/ArrangeSection";
 import { ShadowPanel, StrokePanel } from "./inspector/EffectPanels";
 import { FrameSection } from "./inspector/FrameSection";
 import { ImageSection } from "./inspector/ImageSection";
@@ -37,6 +39,7 @@ export function Inspector() {
   return (
     <div className="panel-section inspector">
       <h3>Inspector</h3>
+      {selectedLayerIds.length > 1 && <ArrangeSection />}
       {selectedLayerIds.length > 1 && (
         <p className="muted multi-note">
           {selectedLayerIds.length}
@@ -63,6 +66,7 @@ export function Inspector() {
         {layer.type === "image" && (
           <>
             <ImageSection layer={layer} patch={patch} commit={commitTransient} />
+            <AdjustSection layer={layer} patch={patch} commit={commitTransient} />
             <AiToolsSection layer={layer} patch={patch} commit={commitTransient} />
             <ShadowPanel
               shadow={layer.shadow}
@@ -111,7 +115,12 @@ export function Inspector() {
             />
           </>
         )}
-        {layer.type === "frame" && <FrameSection layer={layer} patch={patch} commit={commitTransient} />}
+        {layer.type === "frame" && (
+          <>
+            <FrameSection layer={layer} patch={patch} commit={commitTransient} />
+            <AdjustSection layer={layer} patch={patch} commit={commitTransient} />
+          </>
+        )}
         {layer.type === "line" && (
           <>
             <LineSection layer={layer} patch={patch} commit={commitTransient} />

@@ -1,5 +1,6 @@
 import { type LineLayer, type RectLayer, type ShapeLayer } from "@mycanvas/shared";
 import { ColorField, NumberField, type SectionProps } from "./fields";
+import { FillField } from "./FillField";
 import { Panel } from "./Panel";
 
 /** Rectangle: size, fill, corner radius. */
@@ -25,14 +26,6 @@ export function RectSection({ layer, patch, commit }: SectionProps<RectLayer>) {
           }}
           onCommit={commit}
         />
-        <ColorField
-          label="Fill"
-          value={layer.fill}
-          onChange={(fill) => {
-            patch({ fill }, true);
-          }}
-          onCommit={commit}
-        />
         <NumberField
           label="Corner radius"
           value={layer.cornerRadius}
@@ -43,6 +36,14 @@ export function RectSection({ layer, patch, commit }: SectionProps<RectLayer>) {
           onCommit={commit}
         />
       </div>
+      <FillField
+        label="Fill"
+        color={layer.fill}
+        gradient={layer.gradient}
+        onColor={(fill, transient) => { patch({ fill }, transient); }}
+        onGradient={(gradient, transient) => { patch({ gradient }, transient); }}
+        onCommit={commit}
+      />
     </Panel>
   );
 }
@@ -70,14 +71,6 @@ export function ShapeSection({ layer, patch, commit }: SectionProps<ShapeLayer>)
           }}
           onCommit={commit}
         />
-        <ColorField
-          label="Fill"
-          value={layer.fill}
-          onChange={(fill) => {
-            patch({ fill }, true);
-          }}
-          onCommit={commit}
-        />
         {layer.shape !== "circle" && (
           <NumberField
             label="Corner radius"
@@ -90,6 +83,14 @@ export function ShapeSection({ layer, patch, commit }: SectionProps<ShapeLayer>)
           />
         )}
       </div>
+      <FillField
+        label="Fill"
+        color={layer.fill}
+        gradient={layer.gradient}
+        onColor={(fill, transient) => { patch({ fill }, transient); }}
+        onGradient={(gradient, transient) => { patch({ gradient }, transient); }}
+        onCommit={commit}
+      />
     </Panel>
   );
 }
