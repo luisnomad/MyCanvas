@@ -1,0 +1,324 @@
+/* Uploads library: drawer panel, manager window, tiles, delete dialog */
+
+.uploads-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 100%;
+  border-radius: var(--radius);
+  outline: 2px dashed transparent;
+  outline-offset: 4px;
+  transition: outline-color 0.15s;
+}
+
+.uploads-panel.drop-active,
+.uploads-manager.drop-active {
+  outline: 2px dashed var(--accent);
+}
+
+.uploads-panel > .primary.block {
+  margin-bottom: 0;
+}
+
+.uploads-panel-tools {
+  display: flex;
+  gap: 6px;
+}
+
+.uploads-panel-tools .uploads-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.uploads-panel-tools select {
+  width: auto;
+}
+
+.uploads-search {
+  width: 100%;
+}
+
+.uploads-manage {
+  font-size: 12px;
+}
+
+/* Tile */
+
+.asset-tile {
+  position: relative;
+  border-radius: var(--radius);
+}
+
+.asset-tile .asset-thumb {
+  width: 100%;
+  border: 1px solid transparent;
+}
+
+.asset-tile.selected .asset-thumb,
+.asset-tile.focused .asset-thumb {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.asset-menu-button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  line-height: 1;
+  font-size: 15px;
+  border-radius: 6px;
+  color: #ffffff;
+  background: rgb(0 0 0 / 45%);
+  border: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.asset-tile:hover .asset-menu-button,
+.asset-menu-button:focus-visible,
+.asset-menu-button[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.asset-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  color: #ffffff;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.asset-check {
+  position: absolute;
+  bottom: 22px;
+  right: 6px;
+  display: flex;
+  padding: 3px;
+  border-radius: 5px;
+  background: rgb(0 0 0 / 35%);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.asset-tile:hover .asset-check,
+.asset-tile.selected .asset-check {
+  opacity: 1;
+}
+
+.asset-menu {
+  position: absolute;
+  top: 30px;
+  right: 5px;
+  z-index: 20;
+  min-width: 150px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.asset-menu button {
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.asset-menu button:hover {
+  background: var(--surface-inner);
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
+.asset-rename {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+/* Manager window */
+
+.dialog.uploads-manager {
+  width: min(1100px, calc(100vw - 32px));
+  height: min(760px, calc(100vh - 64px));
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.uploads-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.uploads-header h2 {
+  margin: 0 0 2px;
+}
+
+.uploads-header p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.uploads-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.uploads-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.uploads-toolbar .uploads-search {
+  width: 220px;
+}
+
+.uploads-toolbar .muted {
+  font-size: 12px;
+}
+
+.uploads-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+}
+
+.uploads-grid-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.asset-grid.uploads-grid {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.uploads-empty {
+  padding: 40px 0;
+  text-align: center;
+}
+
+.uploads-details {
+  width: 260px;
+  flex: none;
+  overflow-y: auto;
+  padding-left: 16px;
+  border-left: 1px solid var(--border);
+}
+
+.uploads-details-preview {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius);
+  background:
+    repeating-conic-gradient(var(--surface-inner) 0% 25%, var(--surface) 0% 50%) 50% / 16px 16px;
+  overflow: hidden;
+}
+
+.uploads-details-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.uploads-details h3 {
+  margin: 12px 0 8px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.uploads-details h4 {
+  margin: 16px 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.uploads-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.uploads-meta dt {
+  color: var(--text-secondary);
+}
+
+.uploads-meta dd {
+  margin: 0;
+}
+
+.usage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.usage-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.usage-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  min-width: 56px;
+}
+
+.dialog-backdrop.dialog-backdrop-top {
+  z-index: 110;
+}
+
+.delete-assets-dialog .usage-list {
+  max-height: 180px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+@media (width <= 760px) {
+  .uploads-details {
+    display: none;
+  }
+}

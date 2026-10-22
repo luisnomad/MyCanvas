@@ -10,12 +10,13 @@ import {
   defaultShadow,
   defaultStroke,
 } from "@mycanvas/shared";
-import { api, type AssetInfo } from "../api";
-import { getCachedImageSize } from "../hooks/useImage";
+import { api } from "../api";
 import { newLayerId, primarySelectedId, useEditorStore } from "../store/editorStore";
 import { ensureFontLoaded } from "../utils/fonts";
-import { ASSET_DRAG_MIME, framePathData, setCurrentAssetDrag } from "../utils/frames";
+import { framePathData } from "../utils/frames";
+import { gradientCss } from "../utils/gradients";
 import { FillField } from "./inspector/FillField";
+import { UploadsPanel } from "./uploads/UploadsPanel";
 import { Panel } from "./inspector/Panel";
 import { TextContentSection } from "./inspector/TextContentSection";
 import { TextEffectsSection } from "./inspector/TextEffectsSection";
@@ -61,20 +62,14 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
   const selectedLayer = useEditorStore((state) =>
     state.design?.layers.find((layer) => layer.id === primarySelectedId(state)));
   const addLayer = useEditorStore((state) => state.addLayer);
-  const addImageLayer = useEditorStore((state) => state.addImageLayer);
   const updateLayer = useEditorStore((state) => state.updateLayer);
   const setBackground = useEditorStore((state) => state.setBackground);
   const setBackgroundGradient = useEditorStore((state) => state.setBackgroundGradient);
   const commitTransient = useEditorStore((state) => state.commitTransient);
 
-  const assetsVersion = useEditorStore((state) => state.assetsVersion);
-
   const [tab, setTab] = useState<RailTab>("text");
-  const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const [lastBgColor, setLastBgColor] = useState("#ffffff");
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const propertiesSectionRef = useRef<HTMLDivElement | null>(null);
   const handledPropertiesRequestRef = useRef(0);
   const pendingPropertiesScrollRef = useRef(false);
@@ -94,15 +89,6 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
     propertiesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     pendingPropertiesScrollRef.current = false;
   }, [tab, textPropertiesRequest]);
-
-  // Refetch the asset list on mount and whenever an upload lands (including
-  // drag-and-drop uploads onto the canvas).
-  useEffect(() => {
-    void api
-      .listAssets()
-      .then(setAssets)
-      .catch(() => undefined);
-  }, [assetsVersion]);
 
   useEffect(() => {
     let changed = false;
@@ -255,36 +241,6 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
       cornerRadius,
     };
     addLayer(layer);
-  };
-
-  const addAssetToCanvas = (asset: string) => {
-    const url = `/assets/${asset}`;
-    const cached = getCachedImageSize(url);
-    if (cached) {
-      addImageLayer(asset, cached.width, cached.height);
-      return;
-    }
-    const img = new window.Image();
-    img.onload = () => {
-      addImageLayer(asset, img.naturalWidth || 1, img.naturalHeight || 1);
-    };
-    img.src = url;
-  };
-
-  const onFileChosen = (file: File | undefined) => {
-    if (!file) {
-      return;
-    }
-    setUploadError(null);
-    void api
-      .uploadAsset(file)
-      .then((info) => {
-        setAssets((prev) => [...prev, info]);
-        addAssetToCanvas(info.asset);
-      })
-      .catch((error: unknown) => {
-        setUploadError(error instanceof Error ? error.message : "Upload failed");
-      });
   };
 
   const railTabs: { id: RailTab; label: string; icon: ReactNode }[] = [
@@ -477,60 +433,27 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
             </div>
           )}
 
-          {tab === "uploads" && (
-            <>
-              <button
-                type="button"
-                className="primary block"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M16 16l-4-4-4 4M12 12v9" />
-                  <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
-                </svg>
-                Upload image
-              </button>
-              {uploadError && <p className="form-error">{uploadError}</p>}
-              <div className="panel-section">
-                {assets.length === 0
-                  ? (
-                      <p className="muted">No uploads yet.</p>
-                    )
-                  : (
-                      <div className="asset-grid">
-                        {assets.map((info) => (
-                          <button
-                            key={info.asset}
-                            type="button"
-                            className="asset-thumb"
-                            title={info.name}
-                            draggable
-                            onDragStart={(e) => {
-                              e.dataTransfer.setData(ASSET_DRAG_MIME, info.asset);
-                              e.dataTransfer.effectAllowed = "copy";
-                              setCurrentAssetDrag(info.asset);
-                            }}
-                            onDragEnd={() => {
-                              setCurrentAssetDrag(null);
-                            }}
-                            onClick={() => {
-                              addAssetToCanvas(info.asset);
-                            }}
-                          >
-                            <img src={`/assets/${info.asset}`} alt={info.name} loading="lazy" draggable={false} />
-                            <span className="asset-name">{info.name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-              </div>
-            </>
-          )}
+          {tab === "uploads" && <UploadsPanel />}
         </div>
 
         <div className="panel-bottom">
-          <div className="panel-section">
-            <h3>Background</h3>
+          <Panel
+            title="Background"
+            defaultOpen={false}
+            headerRight={(
+              <span
+                className="background-swatch"
+                aria-hidden="true"
+                style={{
+                  background: transparent
+                    ? undefined
+                    : design.backgroundGradient
+                      ? gradientCss(design.backgroundGradient)
+                      : design.background,
+                }}
+              />
+            )}
+          >
             <FillField
               label="Fill"
               color={transparent ? lastBgColor : design.background}
@@ -553,20 +476,10 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
               />
               Transparent
             </label>
-          </div>
+          </Panel>
         </div>
       </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
-        hidden
-        onChange={(e) => {
-          onFileChosen(e.target.files?.[0]);
-          e.target.value = "";
-        }}
-      />
     </aside>
   );
 }

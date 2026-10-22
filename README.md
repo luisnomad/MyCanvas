@@ -85,7 +85,11 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 - Drag image files straight from the filesystem onto the canvas — they upload and
   land where you drop them. Dropping onto a frame fills it; dropping near the
   canvas edge sets the image as the full-canvas background.
-- A reusable Uploads library per installation, with original filenames kept.
+- A shared Uploads library for all designs: the editor drawer (search, filter,
+  click or drag to place, set as background, rename, delete) and an Uploads
+  manager (also on the projects page) with multi-select, "select unused",
+  bulk delete, file details and links to every design using an image. Deleting
+  an image still in use asks first and lists where it's used.
 - Image cropping via side handles; corner radius on shapes and frames.
 - Non-destructive image looks: filter presets (Vivid, Warm, Mono, …),
   brightness, contrast, saturation, hue and blur, plus flip horizontal/vertical.

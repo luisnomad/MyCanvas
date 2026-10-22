@@ -1468,3 +1468,21 @@ input.bg-color {
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
+
+/* Collapsible Background section (left panel) */
+
+.panel-bottom .panel {
+  margin: 0;
+}
+
+.background-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  /* Checkerboard shows through when the background is transparent. */
+  background:
+    repeating-conic-gradient(var(--surface-inner) 0% 25%, var(--surface) 0% 50%) 50% / 8px 8px;
+}

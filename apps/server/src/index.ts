@@ -3,11 +3,19 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { existsSync } from "node:fs";
-import { readdir, unlink, writeFile } from "node:fs/promises";
+import { readdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { type Design, type DesignSummary, type TemplateSummary, ASPECT_RATIOS } from "@mycanvas/shared";
+import {
+  type AssetInfo,
+  type Design,
+  type DesignSummary,
+  type TemplateSummary,
+  ASPECT_RATIOS,
+  GENERATED_ASSET_NAMES,
+} from "@mycanvas/shared";
 
+import { assetUsageIndex } from "./asset-usage";
 import { STARTER_TEMPLATES, findStarterTemplate } from "./starter-templates";
 import { listSystemFonts } from "./system-fonts";
 import {
@@ -264,18 +272,44 @@ app.delete("/api/templates/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+function isSafeAssetFile(file: string): boolean {
+  return isSafeId(path.basename(file, path.extname(file))) && IMAGE_EXTENSIONS.has(path.extname(file).toLowerCase());
+}
+
+async function readAssetManifest(): Promise<Record<string, string>> {
+  return (await readJsonFile<Record<string, string>>(assetsManifestFile)) ?? {};
+}
+
+/** The shared library, newest first, with where each image is used. */
 app.get("/api/assets", async (c) => {
+  let files: string[];
   try {
-    const manifest = (await readJsonFile<Record<string, string>>(assetsManifestFile)) ?? {};
-    const files = await readdir(assetsDir);
-    return c.json(
-      files
-        .filter((f) => !f.startsWith("."))
-        .map((asset) => ({ asset, name: manifest[asset] ?? asset })),
-    );
+    files = (await readdir(assetsDir)).filter((file) => !file.startsWith("."));
   } catch {
     return c.json([]);
   }
+  const [manifest, usage] = await Promise.all([readAssetManifest(), assetUsageIndex()]);
+  const infos = await Promise.all(files.map(async (asset): Promise<AssetInfo | null> => {
+    try {
+      const info = await stat(path.join(assetsDir, asset));
+      const name = manifest[asset] ?? asset;
+      return {
+        asset,
+        name,
+        size: info.size,
+        uploadedAt: info.mtime.toISOString(),
+        generated: GENERATED_ASSET_NAMES.includes(name),
+        usedIn: usage.get(asset) ?? [],
+      };
+    } catch {
+      return null;
+    }
+  }));
+  return c.json(
+    infos
+      .filter((info): info is AssetInfo => info !== null)
+      .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)),
+  );
 });
 
 app.post("/api/assets", async (c) => {
@@ -299,20 +333,47 @@ app.post("/api/assets", async (c) => {
   return c.json({ asset, name: file.name }, 201);
 });
 
+app.patch("/api/assets/:file", async (c) => {
+  const file = c.req.param("file");
+  const body = await c.req.json<{ name?: string }>();
+  const name = body.name?.trim();
+  if (!isSafeAssetFile(file) || !existsSync(path.join(assetsDir, file))) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  if (!name || name.length > 200) {
+    return c.json({ error: "Name must be 1–200 characters" }, 400);
+  }
+  const manifest = await readAssetManifest();
+  manifest[file] = name;
+  await writeJsonFile(assetsManifestFile, manifest);
+  return c.json({ asset: file, name });
+});
+
+/**
+ * Deletes an upload. An image still used by a design or template is kept
+ * (409 + where it's used) unless `?force=1`; forced deletes leave those
+ * layers pointing at a missing image.
+ */
 app.delete("/api/assets/:file", async (c) => {
   const file = c.req.param("file");
-  if (!isSafeId(path.basename(file, path.extname(file)))) {
+  if (!isSafeAssetFile(file)) {
     return c.json({ error: "Not found" }, 404);
+  }
+  if (c.req.query("force") !== "1") {
+    const usedIn = (await assetUsageIndex()).get(file) ?? [];
+    if (usedIn.length > 0) {
+      return c.json({ error: "Image is in use", usedIn }, 409);
+    }
   }
   try {
     await unlink(path.join(assetsDir, file));
-    const manifest = (await readJsonFile<Record<string, string>>(assetsManifestFile)) ?? {};
-    if (file in manifest) {
-      delete manifest[file];
-      await writeJsonFile(assetsManifestFile, manifest);
-    }
   } catch {
     return c.json({ error: "Not found" }, 404);
+  }
+  const manifest = await readAssetManifest();
+  if (file in manifest) {
+    delete manifest[file];
+    await writeJsonFile(assetsManifestFile, manifest);
   }
   return c.json({ ok: true });
 });

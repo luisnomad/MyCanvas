@@ -1,11 +1,14 @@
-import { type Design, type DesignSummary, type TemplateSummary } from "@mycanvas/shared";
+import { type AssetInfo, type Design, type DesignSummary, type TemplateSummary } from "@mycanvas/shared";
 
 export class ApiError extends Error {
   status: number;
+  /** Parsed JSON error body, when the server sent one. */
+  body: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -13,15 +16,17 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) {
-        message = body.error;
+      body = await res.json();
+      const error = (body as { error?: string }).error;
+      if (error) {
+        message = error;
       }
     } catch {
       // Response had no JSON body; keep the status text.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, body);
   }
   return (await res.json()) as T;
 }
@@ -34,12 +39,7 @@ function jsonInit(method: string, body: unknown): RequestInit {
   };
 }
 
-export interface AssetInfo {
-  /** Server-side asset filename (served at /assets/<asset>). */
-  asset: string;
-  /** Original upload filename. */
-  name: string;
-}
+export type { AssetInfo };
 
 export interface CreateDesignInput {
   name?: string;
@@ -70,10 +70,13 @@ export const api = {
   uploadAsset: (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return request<AssetInfo>("/api/assets", { method: "POST", body: form });
+    return request<Pick<AssetInfo, "asset" | "name">>("/api/assets", { method: "POST", body: form });
   },
-  deleteAsset: (file: string) =>
-    request<{ ok: boolean }>(`/api/assets/${encodeURIComponent(file)}`, { method: "DELETE" }),
+  renameAsset: (file: string, name: string) =>
+    request<Pick<AssetInfo, "asset" | "name">>(`/api/assets/${encodeURIComponent(file)}`, jsonInit("PATCH", { name })),
+  /** Rejects with ApiError 409 (body.usedIn) for images in use unless `force`. */
+  deleteAsset: (file: string, force = false) =>
+    request<{ ok: boolean }>(`/api/assets/${encodeURIComponent(file)}${force ? "?force=1" : ""}`, { method: "DELETE" }),
   systemFonts: () => request<string[]>("/api/fonts/system"),
   getFontFavorites: () => request<{ googleFontFavorites: string[] }>("/api/fonts/favorites"),
   setFontFavorites: (favorites: string[]) =>

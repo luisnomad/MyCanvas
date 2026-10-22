@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Brand } from "../components/Brand";
 import { TemplateGallery } from "../components/TemplateGallery";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { UploadsManager } from "../components/uploads/UploadsManager";
 import { relativeEditedTime } from "../utils/relative-time";
 
 const MAX_CANVAS = 8192;
@@ -37,6 +38,7 @@ function PresetGlyph({ width, height }: { width: number; height: number }) {
 export function ProjectList() {
   const [designs, setDesigns] = useState<DesignSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showUploads, setShowUploads] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [presetId, setPresetId] = useState(ASPECT_RATIOS[0]?.id ?? "16:9");
@@ -147,6 +149,15 @@ export function ProjectList() {
       <header className="top-bar">
         <Brand />
         <div className="top-bar-actions">
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              setShowUploads(true);
+            }}
+          >
+            Uploads
+          </button>
           <ThemeToggle />
         </div>
       </header>
@@ -395,6 +406,15 @@ export function ProjectList() {
             </div>
           </div>
         </div>
+      )}
+      {showUploads && (
+        <UploadsManager
+          onClose={() => {
+            setShowUploads(false);
+            // Deleting an image changes design previews only on next save.
+            void api.listDesigns().then(setDesigns).catch(() => undefined);
+          }}
+        />
       )}
     </div>
   );
