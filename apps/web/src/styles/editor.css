@@ -162,6 +162,7 @@
 .canvas-wrap {
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .editor-right {
@@ -1431,4 +1432,39 @@ input.bg-color {
 
 .shortcut-row dd {
   margin: 0;
+}
+
+/* Rulers (20px = RULER_SIZE in Rulers.tsx) */
+
+.canvas-viewport.rulers-on {
+  padding-top: 44px;
+  padding-left: 44px;
+}
+
+.ruler {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.ruler-top {
+  top: 0;
+  left: 0;
+}
+
+.ruler-left {
+  top: 0;
+  left: 0;
+}
+
+.ruler-corner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  width: 20px;
+  height: 20px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }

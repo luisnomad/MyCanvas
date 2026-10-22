@@ -1,6 +1,6 @@
 import Konva from "konva";
 import { type DragEvent as ReactDragEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Arc, Group, Image as KonvaImage, Layer, Line, Path, Rect, Shape, Stage, Transformer } from "react-konva";
+import { Arc, Circle, Group, Image as KonvaImage, Layer, Line, Path, Rect, Shape, Stage, Transformer } from "react-konva";
 import { type Design, type FrameContent, type Layer as EditorLayer } from "@mycanvas/shared";
 import { api } from "../api";
 import { useEditorStore, primarySelectedId } from "../store/editorStore";
@@ -21,6 +21,7 @@ import {
   traceFramePath,
 } from "../utils/frames";
 import { LayerNode } from "./LayerNode";
+import { Rulers } from "./Rulers";
 import { TextEditorOverlay } from "./TextEditorOverlay";
 
 interface CanvasStageProps {
@@ -295,6 +296,8 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
   const neutralLine = theme === "dark" ? "#9a9aa5" : "#6e6e7a";
   const editingTextLayerId = useEditorStore((state) => state.editingTextLayerId);
   const showGrid = useViewSettings((state) => state.showGrid);
+  const showRulers = useViewSettings((state) => state.showRulers);
+  const scaleBoxRef = useRef<HTMLDivElement | null>(null);
   const gridSize = useViewSettings((state) => state.gridSize);
   const editingFrameId = useEditorStore((state) => state.editingFrameId);
   /** Accent outline rect for the frame content-edit mode (no anchors). */
@@ -899,6 +902,32 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
   // (no anchors) plus an unlock button pinned to its top-right corner
   // (overlay layer — never exported). Constant screen size at any zoom.
   const [lockBadge, setLockBadge] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  // Gradient direction knob for a single selected rect/shape with a linear
+  // gradient: drag around the layer's center to set the angle (overlay only).
+  const [gradientKnob, setGradientKnob] = useState<{ id: string; cx: number; cy: number; radius: number } | null>(null);
+  useEffect(() => {
+    const layer =
+      selectedLayerIds.length === 1 && !editingTextLayerId && !editingFrameId
+        ? design.layers.find((entry) => entry.id === selectedLayerIds[0])
+        : undefined;
+    const node = layer ? nodesRef.current.get(layer.id) : undefined;
+    if (!layer || !node || layer.locked || (layer.type !== "rect" && layer.type !== "shape") || layer.gradient?.type !== "linear") {
+      setGradientKnob(null);
+      return;
+    }
+    const rect = node.getClientRect({ skipShadow: true });
+    setGradientKnob({
+      id: layer.id,
+      cx: rect.x + rect.width / 2,
+      cy: rect.y + rect.height / 2,
+      radius: Math.max(28 / scale, Math.min(rect.width, rect.height) * 0.32),
+    });
+  }, [selectedLayerIds, design.layers, editingTextLayerId, editingFrameId, scale]);
+  const knobLayer = gradientKnob ? design.layers.find((entry) => entry.id === gradientKnob.id) : undefined;
+  const knobGradient = knobLayer && (knobLayer.type === "rect" || knobLayer.type === "shape") ? knobLayer.gradient : undefined;
+  // The gradient lives in layer space, so the knob shows it rotated with the layer.
+  const knobAngle = knobGradient && knobLayer ? ((knobGradient.angle + knobLayer.rotation) * Math.PI) / 180 : 0;
   useEffect(() => {
     const layer =
       selectedLayerIds.length === 1 && !editingTextLayerId
@@ -1300,343 +1329,417 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
     : null;
 
   return (
-    <div
-      className="canvas-viewport"
-      ref={containerRef}
-      onPointerDown={(e) => {
+    <>
+      <div
+        className={showRulers ? "canvas-viewport rulers-on" : "canvas-viewport"}
+        ref={containerRef}
+        onPointerDown={(e) => {
         // Clicking the canvas releases focus from any inspector control so
         // keyboard shortcuts (copy/paste, nudge, delete) always work after
         // interacting with the canvas. Blurring also commits transient edits.
-        const active = document.activeElement;
-        const target = e.target;
-        if (
-          active instanceof HTMLElement &&
-          (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT") &&
-          !(target instanceof HTMLElement && target.closest("input, textarea, select"))
-        ) {
-          active.blur();
-        }
-      }}
-      onDragEnter={onDragEnter}
-      onDragLeave={onDragLeave}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-    >
-      {dropState === "reject" && (
-        <div className="content-edit-hint drop-hint drop-reject-hint">Only image files can be dropped</div>
-      )}
-      {dropEdge && <div className="content-edit-hint drop-hint">Drop to set as background</div>}
-      {editingFrameId && (
-        <div className="content-edit-hint">Editing image — drag to pan, scroll to zoom · Enter to commit</div>
-      )}
-      <div
-        className="canvas-scale-box"
-        style={{ width: design.width * scale, height: design.height * scale }}
+          const active = document.activeElement;
+          const target = e.target;
+          if (
+            active instanceof HTMLElement &&
+            (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT") &&
+            !(target instanceof HTMLElement && target.closest("input, textarea, select"))
+          ) {
+            active.blur();
+          }
+        }}
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
       >
+        {dropState === "reject" && (
+          <div className="content-edit-hint drop-hint drop-reject-hint">Only image files can be dropped</div>
+        )}
+        {dropEdge && <div className="content-edit-hint drop-hint">Drop to set as background</div>}
+        {editingFrameId && (
+          <div className="content-edit-hint">Editing image — drag to pan, scroll to zoom · Enter to commit</div>
+        )}
         <div
-          className="canvas-natural"
-          ref={naturalRef}
-          style={{
-            width: design.width,
-            height: design.height,
-            transform: `scale(${String(scale)})`,
-          }}
+          className="canvas-scale-box"
+          ref={scaleBoxRef}
+          style={{ width: design.width * scale, height: design.height * scale }}
         >
-          <Stage
-            width={design.width}
-            height={design.height}
-            onMouseDown={onStageMouseDown}
-            onContextMenu={onStageContextMenu}
+          <div
+            className="canvas-natural"
+            ref={naturalRef}
+            style={{
+              width: design.width,
+              height: design.height,
+              transform: `scale(${String(scale)})`,
+            }}
           >
-            {transparent && (
-              <Layer listening={false}>
-                <Rect
-                  x={0}
-                  y={0}
-                  width={design.width}
-                  height={design.height}
-                  fillPatternImage={checkerImage}
-                />
+            <Stage
+              width={design.width}
+              height={design.height}
+              onMouseDown={onStageMouseDown}
+              onContextMenu={onStageContextMenu}
+            >
+              {transparent && (
+                <Layer listening={false}>
+                  <Rect
+                    x={0}
+                    y={0}
+                    width={design.width}
+                    height={design.height}
+                    fillPatternImage={checkerImage}
+                  />
+                </Layer>
+              )}
+              <Layer ref={contentLayerRef}>
+                {!transparent && (
+                  <Rect
+                    name="canvas-background"
+                    x={0}
+                    y={0}
+                    width={design.width}
+                    height={design.height}
+                    fill={design.background}
+                    {...gradientFillProps(design.backgroundGradient, design.width, design.height)}
+                  />
+                )}
+                {design.layers.map((layer) => (
+                  <LayerNode key={layer.id} layer={layer} registerRef={registerRef} />
+                ))}
               </Layer>
-            )}
-            <Layer ref={contentLayerRef}>
-              {!transparent && (
-                <Rect
-                  name="canvas-background"
-                  x={0}
-                  y={0}
-                  width={design.width}
-                  height={design.height}
-                  fill={design.background}
-                  {...gradientFillProps(design.backgroundGradient, design.width, design.height)}
-                />
-              )}
-              {design.layers.map((layer) => (
-                <LayerNode key={layer.id} layer={layer} registerRef={registerRef} />
-              ))}
-            </Layer>
-            <Layer>
-              {showGrid && gridSize > 0 && (
-                <Shape
-                  listening={false}
-                  stroke={accentColor}
-                  strokeWidth={1 / scale}
-                  opacity={0.22}
-                  sceneFunc={(ctx, shape) => {
-                    ctx.beginPath();
-                    for (let x = gridSize; x < design.width; x += gridSize) {
-                      ctx.moveTo(x, 0);
-                      ctx.lineTo(x, design.height);
-                    }
-                    for (let y = gridSize; y < design.height; y += gridSize) {
-                      ctx.moveTo(0, y);
-                      ctx.lineTo(design.width, y);
-                    }
-                    ctx.strokeShape(shape);
-                  }}
-                />
-              )}
-              {memberBoxes.length > 0 && (
-                <>
-                  {memberBoxes.length > 1 && (
-                    <Rect
-                      x={Math.min(...memberBoxes.map((box) => box.x))}
-                      y={Math.min(...memberBoxes.map((box) => box.y))}
-                      width={Math.max(...memberBoxes.map((box) => box.x + box.width)) - Math.min(...memberBoxes.map((box) => box.x))}
-                      height={Math.max(...memberBoxes.map((box) => box.y + box.height)) - Math.min(...memberBoxes.map((box) => box.y))}
-                      stroke={neutralLine}
-                      strokeWidth={1 / scale}
-                      dash={[6 / scale, 4 / scale]}
-                      listening={false}
-                    />
-                  )}
-                  {memberBoxes.map((box) => (
-                    <Rect
-                      key={box.id}
-                      x={box.x}
-                      y={box.y}
-                      width={box.width}
-                      height={box.height}
-                      stroke={accentColor}
-                      strokeWidth={1 / scale}
-                      listening={false}
-                    />
-                  ))}
-                </>
-              )}
-              {dropFrameCue && (
-                <Group
-                  x={dropFrameCue.x}
-                  y={dropFrameCue.y}
-                  rotation={dropFrameCue.rotation}
-                  scaleX={dropFrameCue.scaleX}
-                  scaleY={dropFrameCue.scaleY}
-                  listening={false}
-                >
+              <Layer>
+                {showGrid && gridSize > 0 && (
+                  <Shape
+                    listening={false}
+                    stroke={accentColor}
+                    strokeWidth={1 / scale}
+                    opacity={0.22}
+                    sceneFunc={(ctx, shape) => {
+                      ctx.beginPath();
+                      for (let x = gridSize; x < design.width; x += gridSize) {
+                        ctx.moveTo(x, 0);
+                        ctx.lineTo(x, design.height);
+                      }
+                      for (let y = gridSize; y < design.height; y += gridSize) {
+                        ctx.moveTo(0, y);
+                        ctx.lineTo(design.width, y);
+                      }
+                      ctx.strokeShape(shape);
+                    }}
+                  />
+                )}
+                {memberBoxes.length > 0 && (
+                  <>
+                    {memberBoxes.length > 1 && (
+                      <Rect
+                        x={Math.min(...memberBoxes.map((box) => box.x))}
+                        y={Math.min(...memberBoxes.map((box) => box.y))}
+                        width={Math.max(...memberBoxes.map((box) => box.x + box.width)) - Math.min(...memberBoxes.map((box) => box.x))}
+                        height={Math.max(...memberBoxes.map((box) => box.y + box.height)) - Math.min(...memberBoxes.map((box) => box.y))}
+                        stroke={neutralLine}
+                        strokeWidth={1 / scale}
+                        dash={[6 / scale, 4 / scale]}
+                        listening={false}
+                      />
+                    )}
+                    {memberBoxes.map((box) => (
+                      <Rect
+                        key={box.id}
+                        x={box.x}
+                        y={box.y}
+                        width={box.width}
+                        height={box.height}
+                        stroke={accentColor}
+                        strokeWidth={1 / scale}
+                        listening={false}
+                      />
+                    ))}
+                  </>
+                )}
+                {dropFrameCue && (
                   <Group
-                    clipFunc={(ctx) => {
-                      traceFramePath(
-                        ctx,
+                    x={dropFrameCue.x}
+                    y={dropFrameCue.y}
+                    rotation={dropFrameCue.rotation}
+                    scaleX={dropFrameCue.scaleX}
+                    scaleY={dropFrameCue.scaleY}
+                    listening={false}
+                  >
+                    <Group
+                      clipFunc={(ctx) => {
+                        traceFramePath(
+                          ctx,
+                          dropFrameCue.shape,
+                          dropFrameCue.width,
+                          dropFrameCue.height,
+                          dropFrameCue.cornerRadius ?? 0,
+                        );
+                      }}
+                      listening={false}
+                    >
+                      <Rect width={dropFrameCue.width} height={dropFrameCue.height} fill={accentColor} opacity={0.18} />
+                      {dropPreviewImage && dropFrameCover && (
+                        <KonvaImage
+                          image={dropPreviewImage}
+                          x={dropFrameCover.offsetX}
+                          y={dropFrameCover.offsetY}
+                          scaleX={dropFrameCover.scale}
+                          scaleY={dropFrameCover.scale}
+                          opacity={0.6}
+                        />
+                      )}
+                    </Group>
+                    <Path
+                      data={framePathData(
                         dropFrameCue.shape,
                         dropFrameCue.width,
                         dropFrameCue.height,
                         dropFrameCue.cornerRadius ?? 0,
-                      );
-                    }}
-                    listening={false}
-                  >
-                    <Rect width={dropFrameCue.width} height={dropFrameCue.height} fill={accentColor} opacity={0.18} />
-                    {dropPreviewImage && dropFrameCover && (
-                      <KonvaImage
-                        image={dropPreviewImage}
-                        x={dropFrameCover.offsetX}
-                        y={dropFrameCover.offsetY}
-                        scaleX={dropFrameCover.scale}
-                        scaleY={dropFrameCover.scale}
-                        opacity={0.6}
-                      />
-                    )}
+                      )}
+                      stroke={accentColor}
+                      strokeWidth={1.5 / (scale * (Math.abs(dropFrameCue.scaleX) || 1))}
+                    />
                   </Group>
-                  <Path
-                    data={framePathData(
-                      dropFrameCue.shape,
-                      dropFrameCue.width,
-                      dropFrameCue.height,
-                      dropFrameCue.cornerRadius ?? 0,
-                    )}
-                    stroke={accentColor}
-                    strokeWidth={1.5 / (scale * (Math.abs(dropFrameCue.scaleX) || 1))}
-                  />
-                </Group>
-              )}
-              {dropEdge &&
-                (dropPreviewImage && dropBgCover
-                  ? (
-                      <KonvaImage
-                        image={dropPreviewImage}
-                        x={dropBgCover.offsetX}
-                        y={dropBgCover.offsetY}
-                        scaleX={dropBgCover.scale}
-                        scaleY={dropBgCover.scale}
-                        opacity={0.5}
-                        listening={false}
-                      />
-                    )
-                  : (
-                      <Rect
-                        x={0}
-                        y={0}
-                        width={design.width}
-                        height={design.height}
-                        fill={accentColor}
-                        opacity={0.12}
-                        stroke={accentColor}
-                        strokeWidth={2 / scale}
-                        listening={false}
-                      />
-                    ))}
-              {contentEditBox && (
-                <Rect
-                  x={contentEditBox.x}
-                  y={contentEditBox.y}
-                  width={contentEditBox.width}
-                  height={contentEditBox.height}
-                  stroke={accentColor}
-                  strokeWidth={1.5 / scale}
-                  dash={[6 / scale, 4 / scale]}
-                  listening={false}
-                />
-              )}
-              {hoverBox && (
-                <Rect
-                  x={hoverBox.x}
-                  y={hoverBox.y}
-                  width={hoverBox.width}
-                  height={hoverBox.height}
-                  stroke={accentColor}
-                  strokeWidth={1 / scale}
-                  listening={false}
-                />
-              )}
-              {lockBadge && (
-                <>
+                )}
+                {dropEdge &&
+                  (dropPreviewImage && dropBgCover
+                    ? (
+                        <KonvaImage
+                          image={dropPreviewImage}
+                          x={dropBgCover.offsetX}
+                          y={dropBgCover.offsetY}
+                          scaleX={dropBgCover.scale}
+                          scaleY={dropBgCover.scale}
+                          opacity={0.5}
+                          listening={false}
+                        />
+                      )
+                    : (
+                        <Rect
+                          x={0}
+                          y={0}
+                          width={design.width}
+                          height={design.height}
+                          fill={accentColor}
+                          opacity={0.12}
+                          stroke={accentColor}
+                          strokeWidth={2 / scale}
+                          listening={false}
+                        />
+                      ))}
+                {contentEditBox && (
                   <Rect
-                    x={lockBadge.x}
-                    y={lockBadge.y}
-                    width={lockBadge.width}
-                    height={lockBadge.height}
+                    x={contentEditBox.x}
+                    y={contentEditBox.y}
+                    width={contentEditBox.width}
+                    height={contentEditBox.height}
                     stroke={accentColor}
                     strokeWidth={1.5 / scale}
+                    dash={[6 / scale, 4 / scale]}
                     listening={false}
                   />
-                  <Group
-                    x={lockBadge.x + lockBadge.width + 8 / scale}
-                    y={lockBadge.y - 8 / scale}
-                    onClick={(e) => {
-                      e.cancelBubble = true;
-                      useEditorStore.getState().toggleLockSelected();
-                    }}
-                    onTap={(e) => {
-                      e.cancelBubble = true;
-                      useEditorStore.getState().toggleLockSelected();
-                    }}
-                    onMouseEnter={(e) => {
-                      const container = e.target.getStage()?.container();
-                      if (container) {
-                        container.style.cursor = "pointer";
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      const container = e.target.getStage()?.container();
-                      if (container) {
-                        container.style.cursor = "";
-                      }
-                    }}
-                  >
-                    <Rect
-                      width={26 / scale}
-                      height={26 / scale}
-                      offsetX={13 / scale}
-                      offsetY={13 / scale}
-                      cornerRadius={7 / scale}
-                      fill={accentColor}
-                      shadowColor="#000000"
-                      shadowBlur={3 / scale}
-                      shadowOffsetY={1 / scale}
-                      shadowOpacity={0.3}
-                    />
-                    <Rect
-                      x={-5 / scale}
-                      y={-1 / scale}
-                      width={10 / scale}
-                      height={8 / scale}
-                      cornerRadius={2 / scale}
-                      fill="#ffffff"
-                      listening={false}
-                    />
-                    <Arc
-                      y={-1 / scale}
-                      innerRadius={3.5 / scale}
-                      outerRadius={3.5 / scale}
-                      angle={180}
-                      rotation={180}
+                )}
+                {hoverBox && (
+                  <Rect
+                    x={hoverBox.x}
+                    y={hoverBox.y}
+                    width={hoverBox.width}
+                    height={hoverBox.height}
+                    stroke={accentColor}
+                    strokeWidth={1 / scale}
+                    listening={false}
+                  />
+                )}
+                {gradientKnob && knobGradient && knobLayer && (
+                  <Group listening>
+                    <Line
+                      points={[
+                        gradientKnob.cx - Math.cos(knobAngle) * gradientKnob.radius,
+                        gradientKnob.cy - Math.sin(knobAngle) * gradientKnob.radius,
+                        gradientKnob.cx + Math.cos(knobAngle) * gradientKnob.radius,
+                        gradientKnob.cy + Math.sin(knobAngle) * gradientKnob.radius,
+                      ]}
                       stroke="#ffffff"
-                      strokeWidth={2.2 / scale}
+                      strokeWidth={1.5 / scale}
+                      dash={[4 / scale, 3 / scale]}
+                      shadowColor="#000000"
+                      shadowBlur={2 / scale}
+                      shadowOpacity={0.5}
                       listening={false}
+                    />
+                    <Circle
+                      x={gradientKnob.cx - Math.cos(knobAngle) * gradientKnob.radius}
+                      y={gradientKnob.cy - Math.sin(knobAngle) * gradientKnob.radius}
+                      radius={5 / scale}
+                      fill={knobGradient.stops[0]?.color ?? "#ffffff"}
+                      stroke="#ffffff"
+                      strokeWidth={1.5 / scale}
+                      listening={false}
+                    />
+                    <Circle
+                      x={gradientKnob.cx + Math.cos(knobAngle) * gradientKnob.radius}
+                      y={gradientKnob.cy + Math.sin(knobAngle) * gradientKnob.radius}
+                      radius={7 / scale}
+                      fill={knobGradient.stops[knobGradient.stops.length - 1]?.color ?? "#000000"}
+                      stroke={accentColor}
+                      strokeWidth={2 / scale}
+                      hitStrokeWidth={10 / scale}
+                      draggable
+                      onMouseEnter={(e) => {
+                        const container = e.target.getStage()?.container();
+                        if (container) {
+                          container.style.cursor = "grab";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        const container = e.target.getStage()?.container();
+                        if (container) {
+                          container.style.cursor = "";
+                        }
+                      }}
+                      onMouseDown={(e) => {
+                        e.cancelBubble = true;
+                      }}
+                      onDragMove={(e) => {
+                        const knob = e.target;
+                        const raw = (Math.atan2(knob.y() - gradientKnob.cy, knob.x() - gradientKnob.cx) * 180) / Math.PI;
+                        const step = e.evt.shiftKey ? 15 : 1;
+                        const screenAngle = Math.round(raw / step) * step;
+                        const angle = (((screenAngle - knobLayer.rotation) % 360) + 360) % 360;
+                        const rad = (screenAngle * Math.PI) / 180;
+                        // Keep the knob on its circle while dragging.
+                        knob.position({
+                          x: gradientKnob.cx + Math.cos(rad) * gradientKnob.radius,
+                          y: gradientKnob.cy + Math.sin(rad) * gradientKnob.radius,
+                        });
+                        updateLayer(knobLayer.id, { gradient: { ...knobGradient, angle: Math.round(angle) } }, true);
+                      }}
+                      onDragEnd={() => {
+                        useEditorStore.getState().commitTransient();
+                      }}
                     />
                   </Group>
-                </>
-              )}
-              <Rect
-                ref={marqueeRectRef}
-                visible={false}
-                listening={false}
-                stroke={accentColor}
-                strokeWidth={1 / scale}
-                dash={[4, 4]}
-                fill={`${accentColor}14`}
-              />
-              <Line
-                ref={verticalGuideRef}
-                visible={false}
-                listening={false}
-                stroke="#d946ef"
-                strokeWidth={1 / scale}
-              />
-              <Line
-                ref={horizontalGuideRef}
-                visible={false}
-                listening={false}
-                stroke="#d946ef"
-                strokeWidth={1 / scale}
-              />
-              <Transformer
-                ref={transformerRef}
-                rotateEnabled
-                rotateAnchorAngle={180}
-                rotateAnchorOffset={20}
-                rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
-                rotationSnapTolerance={6}
-                flipEnabled={false}
-                keepRatio
-                ignoreStroke
-                enabledAnchors={enabledAnchors}
-                anchorStyleFunc={anchorStyleFunc}
-                onTransformStart={onTransformStart}
-                onTransform={onTransform}
-                onTransformEnd={onTransformEnd}
-                anchorSize={8}
-                anchorStroke={accentColor}
-                borderStroke={accentColor}
-                borderEnabled={selectedLayerIds.length <= 1}
-              />
-            </Layer>
-          </Stage>
-          {editingLayer?.type === "text" && (
-            <TextEditorOverlay key={editingLayer.id} layer={editingLayer} nodesRef={nodesRef} />
-          )}
+                )}
+                {lockBadge && (
+                  <>
+                    <Rect
+                      x={lockBadge.x}
+                      y={lockBadge.y}
+                      width={lockBadge.width}
+                      height={lockBadge.height}
+                      stroke={accentColor}
+                      strokeWidth={1.5 / scale}
+                      listening={false}
+                    />
+                    <Group
+                      x={lockBadge.x + lockBadge.width + 8 / scale}
+                      y={lockBadge.y - 8 / scale}
+                      onClick={(e) => {
+                        e.cancelBubble = true;
+                        useEditorStore.getState().toggleLockSelected();
+                      }}
+                      onTap={(e) => {
+                        e.cancelBubble = true;
+                        useEditorStore.getState().toggleLockSelected();
+                      }}
+                      onMouseEnter={(e) => {
+                        const container = e.target.getStage()?.container();
+                        if (container) {
+                          container.style.cursor = "pointer";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        const container = e.target.getStage()?.container();
+                        if (container) {
+                          container.style.cursor = "";
+                        }
+                      }}
+                    >
+                      <Rect
+                        width={26 / scale}
+                        height={26 / scale}
+                        offsetX={13 / scale}
+                        offsetY={13 / scale}
+                        cornerRadius={7 / scale}
+                        fill={accentColor}
+                        shadowColor="#000000"
+                        shadowBlur={3 / scale}
+                        shadowOffsetY={1 / scale}
+                        shadowOpacity={0.3}
+                      />
+                      <Rect
+                        x={-5 / scale}
+                        y={-1 / scale}
+                        width={10 / scale}
+                        height={8 / scale}
+                        cornerRadius={2 / scale}
+                        fill="#ffffff"
+                        listening={false}
+                      />
+                      <Arc
+                        y={-1 / scale}
+                        innerRadius={3.5 / scale}
+                        outerRadius={3.5 / scale}
+                        angle={180}
+                        rotation={180}
+                        stroke="#ffffff"
+                        strokeWidth={2.2 / scale}
+                        listening={false}
+                      />
+                    </Group>
+                  </>
+                )}
+                <Rect
+                  ref={marqueeRectRef}
+                  visible={false}
+                  listening={false}
+                  stroke={accentColor}
+                  strokeWidth={1 / scale}
+                  dash={[4, 4]}
+                  fill={`${accentColor}14`}
+                />
+                <Line
+                  ref={verticalGuideRef}
+                  visible={false}
+                  listening={false}
+                  stroke="#d946ef"
+                  strokeWidth={1 / scale}
+                />
+                <Line
+                  ref={horizontalGuideRef}
+                  visible={false}
+                  listening={false}
+                  stroke="#d946ef"
+                  strokeWidth={1 / scale}
+                />
+                <Transformer
+                  ref={transformerRef}
+                  rotateEnabled
+                  rotateAnchorAngle={180}
+                  rotateAnchorOffset={20}
+                  rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
+                  rotationSnapTolerance={6}
+                  flipEnabled={false}
+                  keepRatio
+                  ignoreStroke
+                  enabledAnchors={enabledAnchors}
+                  anchorStyleFunc={anchorStyleFunc}
+                  onTransformStart={onTransformStart}
+                  onTransform={onTransform}
+                  onTransformEnd={onTransformEnd}
+                  anchorSize={8}
+                  anchorStroke={accentColor}
+                  borderStroke={accentColor}
+                  borderEnabled={selectedLayerIds.length <= 1}
+                />
+              </Layer>
+            </Stage>
+            {editingLayer?.type === "text" && (
+              <TextEditorOverlay key={editingLayer.id} layer={editingLayer} nodesRef={nodesRef} />
+            )}
+          </div>
         </div>
       </div>
-    </div>
+      {showRulers && <Rulers viewportRef={containerRef} boxRef={scaleBoxRef} scale={scale} />}
+    </>
   );
 }

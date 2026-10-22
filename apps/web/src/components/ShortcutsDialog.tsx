@@ -38,6 +38,7 @@ const GROUPS: { title: string; items: [keys: string, action: string][] }[] = [
     title: "View",
     items: [
       ["'", "Show / hide grid"],
+      ["⇧ R", "Show / hide rulers"],
       ["?", "This list"],
     ],
   },

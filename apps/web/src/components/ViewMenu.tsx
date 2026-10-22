@@ -9,7 +9,7 @@ export function ViewMenu() {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const popover = usePopoverPlacement(open);
-  const { showGrid, gridSize, snapToGrid, smartGuides, setView } = useViewSettings();
+  const { showGrid, gridSize, snapToGrid, smartGuides, showRulers, setView } = useViewSettings();
 
   useEffect(() => {
     if (!open) {
@@ -49,6 +49,11 @@ export function ViewMenu() {
             <input type="checkbox" checked={showGrid} onChange={(e) => { setView({ showGrid: e.target.checked }); }} />
             Show grid
             <kbd>'</kbd>
+          </label>
+          <label className="checkbox-label">
+            <input type="checkbox" checked={showRulers} onChange={(e) => { setView({ showRulers: e.target.checked }); }} />
+            Show rulers
+            <kbd>⇧ R</kbd>
           </label>
           <label className="checkbox-label">
             <input type="checkbox" checked={snapToGrid} onChange={(e) => { setView({ snapToGrid: e.target.checked }); }} />

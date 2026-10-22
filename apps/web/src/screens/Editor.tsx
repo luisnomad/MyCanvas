@@ -81,6 +81,12 @@ export function Editor({ designId }: { designId: string }) {
         setShowShortcuts((prev) => !prev);
         return;
       }
+      if (!mod && e.shiftKey && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        const view = useViewSettings.getState();
+        view.setView({ showRulers: !view.showRulers });
+        return;
+      }
       if (!mod && e.key === "'") {
         e.preventDefault();
         const view = useViewSettings.getState();

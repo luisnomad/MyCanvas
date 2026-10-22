@@ -7,6 +7,7 @@ export interface ViewSettings {
   gridSize: number;
   snapToGrid: boolean;
   smartGuides: boolean;
+  showRulers: boolean;
 }
 
 interface ViewSettingsStore extends ViewSettings {
@@ -14,7 +15,7 @@ interface ViewSettingsStore extends ViewSettings {
 }
 
 const STORAGE_KEY = "mycanvas-view";
-const DEFAULTS: ViewSettings = { showGrid: false, gridSize: 40, snapToGrid: false, smartGuides: true };
+const DEFAULTS: ViewSettings = { showGrid: false, gridSize: 40, snapToGrid: false, smartGuides: true, showRulers: false };
 
 function load(): ViewSettings {
   try {
@@ -29,9 +30,9 @@ export const useViewSettings = create<ViewSettingsStore>()((set, get) => ({
   ...load(),
   setView: (patch) => {
     set(patch);
-    const { showGrid, gridSize, snapToGrid, smartGuides } = get();
+    const { showGrid, gridSize, snapToGrid, smartGuides, showRulers } = get();
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ showGrid, gridSize, snapToGrid, smartGuides }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ showGrid, gridSize, snapToGrid, smartGuides, showRulers }));
     } catch {
       // Storage unavailable (private mode); settings last for the session.
     }

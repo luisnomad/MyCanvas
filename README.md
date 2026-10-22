@@ -38,8 +38,8 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 - Move, resize, rotate, and multi-select with marquee (click-drag on empty canvas);
   group/ungroup (`Cmd/Ctrl+G`), with collapsible group rows in the layers panel.
 - Smart guides: snapping to other layers' edges and centers and to the canvas
-  center while dragging. Optional grid (`'`) with snap-to-grid, both in the
-  View menu.
+  center while dragging. Optional grid (`'`) with snap-to-grid and rulers
+  (`Shift+R`) that highlight the selection, all in the View menu.
 - Align selected items to each other and space 3+ items evenly (Arrange panel;
   groups move as one).
 - Copy/paste (`Cmd/Ctrl+C` / `Cmd/Ctrl+V`), duplicate (`Cmd/Ctrl+D`), undo/redo,
@@ -67,7 +67,8 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 - "Photo colors": 5-color palettes extracted from each image on the canvas,
   ranked so the dominant image's palette comes first.
 - Linear and radial gradients (with presets and up to 4 stops) on the
-  background, rectangles and shapes.
+  background, rectangles and shapes; drag the on-canvas knob to aim a linear
+  gradient (`Shift` snaps to 15°).
 
 **AI tools (100% local, in-browser)**
 
