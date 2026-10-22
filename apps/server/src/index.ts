@@ -6,8 +6,9 @@ import { existsSync } from "node:fs";
 import { readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { type Design, type DesignSummary, ASPECT_RATIOS } from "@mycanvas/shared";
+import { type Design, type DesignSummary, type TemplateSummary, ASPECT_RATIOS } from "@mycanvas/shared";
 
+import { STARTER_TEMPLATES, findStarterTemplate } from "./starter-templates";
 import { listSystemFonts } from "./system-fonts";
 import {
   assetsDir,
@@ -18,6 +19,7 @@ import {
   newId,
   readJsonFile,
   settingsFile,
+  templatesDir,
   webDistDir,
   writeJsonFile,
 } from "./storage";
@@ -51,6 +53,22 @@ async function readDesign(id: string): Promise<Design | null> {
     return null;
   }
   return readJsonFile<Design>(designFile(id));
+}
+
+function templateFile(id: string): string {
+  return path.join(templatesDir, `${id}.json`);
+}
+
+/** Built-in starters first, then user templates saved under data/templates. */
+async function readTemplate(id: string): Promise<Design | null> {
+  const starter = findStarterTemplate(id);
+  if (starter) {
+    return starter;
+  }
+  if (!isSafeId(id)) {
+    return null;
+  }
+  return readJsonFile<Design>(templateFile(id));
 }
 
 async function readFavorites(): Promise<FavoritesSettings> {
@@ -89,7 +107,25 @@ app.post("/api/designs", async (c) => {
     width?: number;
     height?: number;
     background?: string;
+    templateId?: string;
   }>();
+  if (body.templateId !== undefined) {
+    const source = await readTemplate(body.templateId);
+    if (!source) {
+      return c.json({ error: "Template not found" }, 404);
+    }
+    const now = new Date().toISOString();
+    const trimmed = body.name?.trim();
+    const design: Design = {
+      ...structuredClone(source),
+      id: newId(),
+      name: trimmed === undefined || trimmed === "" ? source.name : trimmed,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeJsonFile(designFile(design.id), design);
+    return c.json(design, 201);
+  }
   const preset = ASPECT_RATIOS.find((r) => r.id === body.aspectRatioId) ?? ASPECT_RATIOS[0];
   const width = body.width ?? preset?.width ?? 1280;
   const height = body.height ?? preset?.height ?? 720;
@@ -165,6 +201,67 @@ app.post("/api/designs/:id/duplicate", async (c) => {
   };
   await writeJsonFile(designFile(copy.id), copy);
   return c.json(copy, 201);
+});
+
+app.get("/api/templates", async (c) => {
+  const toTemplateSummary = (design: Design, builtIn: boolean): TemplateSummary =>
+    ({ ...toSummary(design), builtIn });
+  const user: TemplateSummary[] = [];
+  let files: string[] = [];
+  try {
+    files = await readdir(templatesDir);
+  } catch {
+    // No templates saved yet.
+  }
+  for (const file of files) {
+    if (!file.endsWith(".json")) {
+      continue;
+    }
+    const design = await readJsonFile<Design>(path.join(templatesDir, file));
+    if (design) {
+      user.push(toTemplateSummary(design, false));
+    }
+  }
+  user.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return c.json([...user, ...STARTER_TEMPLATES.map((design) => toTemplateSummary(design, true))]);
+});
+
+app.post("/api/templates", async (c) => {
+  const body = await c.req.json<{ designId?: string; name?: string; thumbnail?: string }>();
+  const source = body.designId === undefined ? null : await readDesign(body.designId);
+  if (!source) {
+    return c.json({ error: "Design not found" }, 404);
+  }
+  const now = new Date().toISOString();
+  const trimmed = body.name?.trim();
+  // A fresh preview from the editor beats a possibly stale stored one.
+  const thumbnail = body.thumbnail?.startsWith("data:image/") ? body.thumbnail : source.thumbnail;
+  const saved: Design = {
+    ...source,
+    id: newId(),
+    thumbnail,
+    name: trimmed === undefined || trimmed === "" ? source.name : trimmed,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await writeJsonFile(templateFile(saved.id), saved);
+  return c.json({ ...toSummary(saved), builtIn: false } satisfies TemplateSummary, 201);
+});
+
+app.delete("/api/templates/:id", async (c) => {
+  const id = c.req.param("id");
+  if (findStarterTemplate(id)) {
+    return c.json({ error: "Built-in templates can't be deleted" }, 400);
+  }
+  if (!isSafeId(id)) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  try {
+    await unlink(templateFile(id));
+  } catch {
+    return c.json({ error: "Not found" }, 404);
+  }
+  return c.json({ ok: true });
 });
 
 app.get("/api/assets", async (c) => {

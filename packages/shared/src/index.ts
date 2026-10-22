@@ -22,3 +22,5 @@ export type {
 export { defaultShadow, defaultStroke, defaultTextEffect } from "./design";
 export type { GoogleFont } from "./google-fonts";
 export { GOOGLE_FONTS } from "./google-fonts";
+export type { SizePreset, TemplateSummary } from "./templates";
+export { PLATFORM_SIZES } from "./templates";

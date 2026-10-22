@@ -7,6 +7,7 @@ import { ExportDialog } from "../components/ExportDialog";
 import { Inspector } from "../components/Inspector";
 import { LayersPanel } from "../components/LayersPanel";
 import { LeftToolbar } from "../components/LeftToolbar";
+import { SaveTemplateButton } from "../components/SaveTemplateButton";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useEditorStore } from "../store/editorStore";
 import { makeDesignThumbnail } from "../utils/canvas-bridge";
@@ -243,6 +244,7 @@ export function Editor({ designId }: { designId: string }) {
         </span>
         <span className="top-bar-spacer" />
         <ThemeToggle />
+        <SaveTemplateButton />
         <button
           type="button"
           className="primary"
