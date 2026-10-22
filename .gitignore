@@ -4,3 +4,4 @@ dist/
 apps/server/data/
 .DS_Store
 reference/
+.claude/worktrees/

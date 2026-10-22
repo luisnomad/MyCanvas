@@ -17,6 +17,7 @@ export default tseslint.config(
       "**/dist/**",
       "**/node_modules/**",
       "apps/server/data/**",
+      ".claude/**",
     ],
   },
   {
