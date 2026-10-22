@@ -8,6 +8,7 @@ const serverRoot = path.resolve(import.meta.dirname, "..");
 export const dataDir = process.env.MYCANVAS_DATA_DIR ?? path.join(serverRoot, "data");
 export const designsDir = path.join(dataDir, "designs");
 export const assetsDir = path.join(dataDir, "assets");
+export const templatesDir = path.join(dataDir, "templates");
 export const assetsManifestFile = path.join(dataDir, "assets.json");
 export const settingsFile = path.join(dataDir, "settings.json");
 
@@ -28,6 +29,7 @@ export function newId(): string {
 export async function ensureDataDirs(): Promise<void> {
   await mkdir(designsDir, { recursive: true });
   await mkdir(assetsDir, { recursive: true });
+  await mkdir(templatesDir, { recursive: true });
 }
 
 export function isSafeId(id: string): boolean {

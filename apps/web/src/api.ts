@@ -1,4 +1,4 @@
-import { type Design, type DesignSummary } from "@mycanvas/shared";
+import { type Design, type DesignSummary, type TemplateSummary } from "@mycanvas/shared";
 
 export class ApiError extends Error {
   status: number;
@@ -47,6 +47,8 @@ export interface CreateDesignInput {
   width?: number;
   height?: number;
   background?: string;
+  /** Start from this template (built-in or saved); size/background come from it. */
+  templateId?: string;
 }
 
 export const api = {
@@ -59,6 +61,11 @@ export const api = {
     request<{ ok: boolean }>(`/api/designs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   duplicateDesign: (id: string) =>
     request<Design>(`/api/designs/${encodeURIComponent(id)}/duplicate`, { method: "POST" }),
+  listTemplates: () => request<TemplateSummary[]>("/api/templates"),
+  saveTemplate: (designId: string, name?: string, thumbnail?: string) =>
+    request<TemplateSummary>("/api/templates", jsonInit("POST", { designId, name, thumbnail })),
+  deleteTemplate: (id: string) =>
+    request<{ ok: boolean }>(`/api/templates/${encodeURIComponent(id)}`, { method: "DELETE" }),
   listAssets: () => request<AssetInfo[]>("/api/assets"),
   uploadAsset: (file: File) => {
     const form = new FormData();
