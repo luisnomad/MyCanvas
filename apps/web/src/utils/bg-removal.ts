@@ -341,8 +341,13 @@ export async function removeLayerBackground(layer: ImageLayer): Promise<void> {
  * image layer exactly over the subject, directly above the topmost text layer
  * sitting above the source (top of stack when there is none). The layer
  * insertion is a single history entry; the async cutout work happens before it.
+ * With `outline`, the letters the subject covers are drawn over it as
+ * outlines (see utils/behind-text.ts) instead of disappearing.
  */
-export async function textBehindSubject(layer: ImageLayer): Promise<void> {
+/** Outline thickness (design px) for new outlined text-behind-subject cutouts. */
+export const DEFAULT_OUTLINE_WIDTH = 3;
+
+export async function textBehindSubject(layer: ImageLayer, options: { outline?: boolean } = {}): Promise<void> {
   // Meaningless on an already-isolated subject (also hidden in the UI then).
   if (layer.cutout || useEditorStore.getState().bgRemoval) {
     return;
@@ -380,6 +385,7 @@ export async function textBehindSubject(layer: ImageLayer): Promise<void> {
     width: frame.width,
     height: frame.height,
     cutout: true,
+    behindText: options.outline ? { mode: "outline", width: DEFAULT_OUTLINE_WIDTH } : undefined,
     // Same look as the photo, or the cutout would stand out from it.
     adjust: structuredClone(layer.adjust),
     flipX: layer.flipX,

@@ -74,7 +74,10 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 
 - **Remove background** — one-click subject cutout.
 - **Text behind subject** — the editorial effect: your heading slips behind the
-  person or object in the photo, automatically.
+  person or object in the photo, automatically. The **outlined** variant keeps
+  the covered letters visible as outlines over the subject, in the text's own
+  font and color; it follows the text live as you move, resize or edit it, and
+  any cutout can switch between hidden and outlined.
 - **Portrait mode** — depth-based background blur with a strength slider.
 - All inference runs in a Web Worker via transformers.js (WebGPU, WASM fallback),
   so the canvas never stutters. Originals are always preserved — every AI result

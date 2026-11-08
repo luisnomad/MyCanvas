@@ -1,6 +1,6 @@
 import Konva from "konva";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Circle, Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text, TextPath } from "react-konva";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Circle, Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Shape, Text, TextPath } from "react-konva";
 import {
   type FrameLayer,
   type ImageLayer,
@@ -17,6 +17,7 @@ import { useEditorStore } from "../store/editorStore";
 import { ensureFontLoaded } from "../utils/fonts";
 import { roundedPolygonPath, shapePoints } from "../utils/rounded-path";
 import { traceFramePath } from "../utils/frames";
+import { TEXT_MAIN_NAME, behindTextOutlineSceneFunc } from "../utils/behind-text";
 import { gradientFillProps } from "../utils/gradients";
 import { imageLookSceneFunc } from "../utils/image-filters";
 
@@ -234,6 +235,8 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
   /** The text node itself (TextPath when curved), without the common layer props. */
   const content = (key: string, props: TextContentProps) => {
     const shared = {
+      // The behind-text outline overlay finds the glyphs by this name.
+      name: key === "main" ? TEXT_MAIN_NAME : undefined,
       text: flatText,
       fontFamily: layer.fontFamily,
       fontSize: layer.fontSize,
@@ -390,7 +393,13 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
 function ImageNode({ layer, registerRef }: { layer: ImageLayer } & LayerNodeProps) {
   const { common, setRefs } = useCommonNodeProps(layer, registerRef);
   const image = useImage(`/assets/${layer.asset}`);
-  return (
+  const behind = layer.cutout ? layer.behindText : undefined;
+  const behindWidth = behind?.width;
+  const overlaySceneFunc = useMemo(
+    () => (behindWidth === undefined ? undefined : behindTextOutlineSceneFunc(layer.id, { mode: "outline", width: behindWidth })),
+    [layer.id, behindWidth],
+  );
+  const picture = (
     <KonvaImage
       ref={setRefs}
       image={image}
@@ -401,6 +410,17 @@ function ImageNode({ layer, registerRef }: { layer: ImageLayer } & LayerNodeProp
       {...shadowProps(layer.shadow)}
       {...common}
     />
+  );
+  if (!overlaySceneFunc || !layer.visible) {
+    return picture;
+  }
+  // Outlined text behind subject: a pass-through overlay at the layer origin,
+  // drawn right above the cutout (see utils/behind-text.ts).
+  return (
+    <>
+      {picture}
+      <Shape listening={false} perfectDrawEnabled={false} sceneFunc={overlaySceneFunc} />
+    </>
   );
 }
 

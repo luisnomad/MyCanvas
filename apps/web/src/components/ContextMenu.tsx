@@ -191,6 +191,16 @@ export function ContextMenu() {
             Text behind subject
           </button>
         )}
+        {layer.type === "image" && !layer.cutout && (
+          <button
+            type="button"
+            role="menuitem"
+            disabled={bgRemovalBusy}
+            onClick={() => { run(() => { void textBehindSubject(layer, { outline: true }); }); }}
+          >
+            Text behind subject, outlined
+          </button>
+        )}
         {layer.type === "image" && (
           <button
             type="button"

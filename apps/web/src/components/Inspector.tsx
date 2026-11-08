@@ -3,6 +3,7 @@ import { type LayerPatch, useEditorStore } from "../store/editorStore";
 import { AdjustSection } from "./inspector/AdjustSection";
 import { AiToolsSection } from "./inspector/AiToolsSection";
 import { ArrangeSection } from "./inspector/ArrangeSection";
+import { BehindTextSection } from "./inspector/BehindTextSection";
 import { ShadowPanel, StrokePanel } from "./inspector/EffectPanels";
 import { FrameSection } from "./inspector/FrameSection";
 import { ImageSection } from "./inspector/ImageSection";
@@ -67,6 +68,7 @@ export function Inspector() {
           <>
             <ImageSection layer={layer} patch={patch} commit={commitTransient} />
             <AdjustSection layer={layer} patch={patch} commit={commitTransient} />
+            <BehindTextSection layer={layer} patch={patch} commit={commitTransient} />
             <AiToolsSection layer={layer} patch={patch} commit={commitTransient} />
             <ShadowPanel
               shadow={layer.shadow}

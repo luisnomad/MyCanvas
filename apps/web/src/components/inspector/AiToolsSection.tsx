@@ -55,6 +55,19 @@ export function AiToolsSection({ layer }: SectionProps<ImageLayer>) {
           Text behind subject
         </button>
       )}
+      {!layer.cutout && (
+        <button
+          type="button"
+          className="secondary block"
+          disabled={busy}
+          title="Like text behind subject, but the covered letters stay visible as outlines over the subject"
+          onClick={() => {
+            void textBehindSubject(layer, { outline: true });
+          }}
+        >
+          Text behind subject, outlined
+        </button>
+      )}
       <button
         type="button"
         className="secondary block"

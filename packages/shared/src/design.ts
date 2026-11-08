@@ -107,6 +107,12 @@ export interface GradientFill {
   stops: { offset: number; color: string }[];
 }
 
+export interface BehindText {
+  mode: "outline";
+  /** Outline thickness in design px (independent of the text's scale). */
+  width: number;
+}
+
 export interface ImageCrop {
   x: number;
   y: number;
@@ -125,6 +131,10 @@ export interface ImageLayer extends LayerBase {
   /** True when the asset is an isolated-subject cutout (from remove-background
    *  or text-behind-subject) — subject extraction is meaningless on it. */
   cutout?: boolean;
+  /** On a subject cutout: how text layers beneath it show where the subject
+   *  covers them. Absent = hidden (classic text behind subject); "outline"
+   *  draws the covered letters on top as outlines in the text's own color. */
+  behindText?: BehindText;
   adjust?: ImageAdjustments;
   /** Mirror the picture inside the layer box (geometry is unchanged). */
   flipX?: boolean;

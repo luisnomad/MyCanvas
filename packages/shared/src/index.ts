@@ -3,6 +3,7 @@ export type { AssetInfo, AssetUsage } from "./assets";
 export { GENERATED_ASSET_NAMES } from "./assets";
 export { ASPECT_RATIOS } from "./aspect-ratios";
 export type {
+  BehindText,
   Design,
   DesignSummary,
   FrameContent,
