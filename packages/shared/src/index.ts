@@ -37,3 +37,5 @@ export type { GoogleFont } from "./google-fonts";
 export { GOOGLE_FONTS } from "./google-fonts";
 export type { SizePreset, TemplateSummary } from "./templates";
 export { PLATFORM_SIZES } from "./templates";
+export type { FontVariant } from "./font-style";
+export { FONT_WEIGHTS, formatFontStyle, isBoldWeight, parseFontStyle } from "./font-style";

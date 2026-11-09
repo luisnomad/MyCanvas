@@ -1,7 +1,8 @@
-import { type TextLayer } from "@mycanvas/shared";
+import { type TextLayer, formatFontStyle, isBoldWeight, parseFontStyle } from "@mycanvas/shared";
 import { primarySelectedId, useEditorStore } from "../store/editorStore";
 import { ColorInput } from "./ColorInput";
 import { FontPicker } from "./FontPicker";
+import { FontWeightSelect } from "./FontWeightSelect";
 
 /**
  * Floating contextual toolbar shown over the canvas while a layer is selected.
@@ -36,12 +37,14 @@ export function ContextBar({ onOpenTextProperties }: { onOpenTextProperties: () 
   }
 
   const text: TextLayer | null = !multi && layer.type === "text" ? layer : null;
-  const bold = text ? text.fontStyle.includes("bold") : false;
-  const italic = text ? text.fontStyle.includes("italic") : false;
+  const variant = text ? parseFontStyle(text.fontStyle) : { weight: 400, italic: false };
+  const bold = isBoldWeight(variant.weight);
+  const italic = variant.italic;
 
+  /** B toggles Regular ↔ Bold; I keeps the weight. */
   const setFontStyle = (nextBold: boolean, nextItalic: boolean) => {
-    const parts = [nextBold ? "bold" : "", nextItalic ? "italic" : ""].filter((part) => part !== "");
-    updateLayer(layer.id, { fontStyle: parts.length > 0 ? parts.join(" ") : "normal" });
+    const weight = nextBold === bold ? variant.weight : nextBold ? 700 : 400;
+    updateLayer(layer.id, { fontStyle: formatFontStyle({ weight, italic: nextItalic }) });
   };
 
   return (
@@ -91,6 +94,14 @@ export function ContextBar({ onOpenTextProperties }: { onOpenTextProperties: () 
               +
             </button>
           </div>
+          <FontWeightSelect
+            className="context-weight"
+            fontFamily={text.fontFamily}
+            fontStyle={text.fontStyle}
+            onChange={(fontStyle) => {
+              updateLayer(layer.id, { fontStyle });
+            }}
+          />
           <button
             type="button"
             className={bold ? "icon-button toggle active" : "icon-button toggle"}

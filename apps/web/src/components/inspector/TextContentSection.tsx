@@ -1,16 +1,19 @@
-import { type TextLayer } from "@mycanvas/shared";
+import { type TextLayer, formatFontStyle, isBoldWeight, parseFontStyle } from "@mycanvas/shared";
 import { FontPicker } from "../FontPicker";
+import { FontWeightSelect } from "../FontWeightSelect";
 import { ColorField, NumberField, type SectionProps } from "./fields";
 import { Panel } from "./Panel";
 
 /** Content, font family, size, fill and style/alignment toggles. */
 export function TextContentSection({ layer, patch, commit }: SectionProps<TextLayer>) {
-  const bold = layer.fontStyle.includes("bold");
-  const italic = layer.fontStyle.includes("italic");
+  const variant = parseFontStyle(layer.fontStyle);
+  const bold = isBoldWeight(variant.weight);
+  const italic = variant.italic;
 
+  /** B toggles Regular ↔ Bold; I keeps the weight. */
   const setFontStyle = (nextBold: boolean, nextItalic: boolean) => {
-    const parts = [nextBold ? "bold" : "", nextItalic ? "italic" : ""].filter((part) => part !== "");
-    patch({ fontStyle: parts.length > 0 ? parts.join(" ") : "normal" });
+    const weight = nextBold === bold ? variant.weight : nextBold ? 700 : 400;
+    patch({ fontStyle: formatFontStyle({ weight, italic: nextItalic }) });
   };
 
   return (
@@ -35,6 +38,16 @@ export function TextContentSection({ layer, patch, commit }: SectionProps<TextLa
           }}
         />
       </div>
+      <label className="field field-wide">
+        <span>Weight</span>
+        <FontWeightSelect
+          fontFamily={layer.fontFamily}
+          fontStyle={layer.fontStyle}
+          onChange={(fontStyle) => {
+            patch({ fontStyle });
+          }}
+        />
+      </label>
       <div className="field-grid">
         <NumberField
           label="Size"

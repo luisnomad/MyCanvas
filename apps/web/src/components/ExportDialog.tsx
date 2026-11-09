@@ -102,10 +102,7 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
   const doExport = async () => {
     setBusy(true);
     try {
-      const families = design.layers
-        .filter((layer): layer is TextLayer => layer.type === "text")
-        .map((layer) => layer.fontFamily);
-      await ensureFontsLoaded(families);
+      await ensureFontsLoaded(design.layers.filter((layer): layer is TextLayer => layer.type === "text"));
       const mimeType = format === "png" ? "image/png" : "image/jpeg";
       const dataUrl = exportDesignImage({
         mimeType,

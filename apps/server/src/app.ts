@@ -614,7 +614,8 @@ const fontCacheDir = path.join(dataDir, "font-cache");
  */
 app.get("/api/fonts/file", async (c) => {
   const family = c.req.query("family") ?? "";
-  const weight = c.req.query("weight") === "700" ? 700 : 400;
+  const requested = Number(c.req.query("weight") ?? "400");
+  const weight = Number.isInteger(requested) && requested >= 100 && requested <= 900 && requested % 100 === 0 ? requested : 400;
   const italic = c.req.query("italic") === "1" ? 1 : 0;
   if (!googleFamilies.has(family)) {
     return c.json({ error: "Not a Google font" }, 404);

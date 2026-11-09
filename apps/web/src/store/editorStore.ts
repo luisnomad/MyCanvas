@@ -388,11 +388,10 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         design.pages = design.pages.map((page) => ({ ...page, layers: page.layers.map(migrateTextEffect) }));
         const firstPageId = design.pages[0]?.id ?? "";
         set({ design: withActivePage(design, firstPageId), activePageId: firstPageId, loadStatus: "ready" });
-        const families = design.pages
+        const textLayers = design.pages
           .flatMap((page) => page.layers)
-          .filter((layer): layer is TextLayer => layer.type === "text")
-          .map((layer) => layer.fontFamily);
-        void ensureFontsLoaded(families).then(() => {
+          .filter((layer): layer is TextLayer => layer.type === "text");
+        void ensureFontsLoaded(textLayers).then(() => {
           // Designs made outside the editor (e.g. generated documents) have
           // no previews yet: once page 1 has had time to draw its images,
           // save it so the project list shows the cover.

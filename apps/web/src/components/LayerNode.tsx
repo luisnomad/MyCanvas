@@ -204,12 +204,12 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
   }, []);
 
   useEffect(() => {
-    void ensureFontLoaded(layer.fontFamily).then(() => {
+    void ensureFontLoaded(layer.fontFamily, layer.fontStyle).then(() => {
       refreshGlowCache();
       localRef.current?.getLayer()?.batchDraw();
       measureLines();
     });
-  }, [layer.fontFamily, localRef, measureLines, refreshGlowCache]);
+  }, [layer.fontFamily, layer.fontStyle, localRef, measureLines, refreshGlowCache]);
 
   useEffect(() => {
     measureLines();

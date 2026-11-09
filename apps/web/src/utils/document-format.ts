@@ -211,17 +211,9 @@ function styleFor(info: FormatInfo, kind: BlockKind): BlockStyle | null {
   return null;
 }
 
-/** Font families the format's text samples use (load before laying out). */
-export function formatFonts(format: Design): Set<string> {
-  const families = new Set<string>();
-  for (const page of format.pages) {
-    for (const layer of page.layers) {
-      if (layer.type === "text") {
-        families.add(layer.fontFamily);
-      }
-    }
-  }
-  return families;
+/** The format's text layers (their fonts load before laying out). */
+export function formatFonts(format: Design): TextLayer[] {
+  return format.pages.flatMap((page) => page.layers.filter((layer): layer is TextLayer => layer.type === "text"));
 }
 
 /* ------------------------------------------------------------------------ */

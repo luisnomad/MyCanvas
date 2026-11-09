@@ -1,6 +1,6 @@
 import Konva from "konva";
 import { type RefObject, useEffect, useRef } from "react";
-import { type TextLayer } from "@mycanvas/shared";
+import { type TextLayer, parseFontStyle } from "@mycanvas/shared";
 import { useEditorStore } from "../store/editorStore";
 
 interface TextEditorOverlayProps {
@@ -61,8 +61,7 @@ export function TextEditorOverlay({ layer, nodesRef }: TextEditorOverlayProps) {
   // text, whose visual box is offset from the layer origin).
   const bounds = node?.getClientRect({ skipShadow: true });
 
-  const bold = layer.fontStyle.includes("bold");
-  const italic = layer.fontStyle.includes("italic");
+  const { weight, italic } = parseFontStyle(layer.fontStyle);
 
   const commit = () => {
     if (committedRef.current) {
@@ -125,7 +124,7 @@ export function TextEditorOverlay({ layer, nodesRef }: TextEditorOverlayProps) {
         width: initialWidth,
         fontFamily: `"${layer.fontFamily}"`,
         fontSize: layer.fontSize * layer.scaleY,
-        fontWeight: bold ? 700 : 400,
+        fontWeight: weight,
         fontStyle: italic ? "italic" : "normal",
         color: layer.fill,
         textAlign: layer.align,

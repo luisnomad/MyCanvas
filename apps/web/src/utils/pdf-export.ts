@@ -10,7 +10,7 @@ import {
   rgb,
   setCharacterSpacing,
 } from "pdf-lib";
-import { type Layer, type TextLayer } from "@mycanvas/shared";
+import { type Layer, type TextLayer, parseFontStyle } from "@mycanvas/shared";
 import { useEditorStore } from "../store/editorStore";
 import { TEXT_MAIN_NAME } from "./behind-text";
 import { getContentLayer, getLayerNode } from "./canvas-bridge";
@@ -65,7 +65,7 @@ function hexToRgb(hex: string) {
 async function waitForPage(layers: Layer[]): Promise<void> {
   await nextFrame();
   await nextFrame();
-  await ensureFontsLoaded(layers.filter((layer): layer is TextLayer => layer.type === "text").map((layer) => layer.fontFamily));
+  await ensureFontsLoaded(layers.filter((layer): layer is TextLayer => layer.type === "text"));
   const deadline = Date.now() + 15000;
   for (;;) {
     const pending = layers.some((layer) => {
@@ -86,6 +86,30 @@ async function waitForPage(layers: Layer[]): Promise<void> {
   getContentLayer()?.draw();
 }
 
+/** Typical style names of installed faces, per weight. */
+const LOCAL_WEIGHT_NAMES: Record<number, string[]> = {
+  100: ["thin", "hairline"],
+  200: ["extralight", "extra light", "ultralight", "ultra light"],
+  300: ["light"],
+  400: ["regular", "normal", "book", "roman", ""],
+  500: ["medium"],
+  600: ["semibold", "semi bold", "demibold", "demi bold"],
+  700: ["bold"],
+  800: ["extrabold", "extra bold", "ultrabold", "ultra bold", "heavy"],
+  900: ["black", "heavy"],
+};
+
+/** Whether an installed face's style name ("Light Italic", "Bold") is this weight/italic. */
+function localFaceMatches(style: string, weight: number, italic: boolean): boolean {
+  const lower = style.toLowerCase().trim();
+  const isItalic = /italic|oblique/.test(lower);
+  if (isItalic !== italic) {
+    return false;
+  }
+  const name = lower.replace(/\s*(italic|oblique)\s*/g, "").trim();
+  return (LOCAL_WEIGHT_NAMES[weight] ?? []).includes(name);
+}
+
 /** Font files for PDF embedding: Google Fonts via our server, else this machine's own fonts. */
 class FontSource {
   private readonly cache = new Map<string, Promise<PDFFont | null>>();
@@ -93,12 +117,11 @@ class FontSource {
   constructor(private readonly pdf: PDFDocument) {}
 
   get(layer: TextLayer): Promise<PDFFont | null> {
-    const bold = layer.fontStyle.includes("bold");
-    const italic = layer.fontStyle.includes("italic");
-    const key = `${layer.fontFamily}|${String(bold)}|${String(italic)}`;
+    const { weight, italic } = parseFontStyle(layer.fontStyle);
+    const key = `${layer.fontFamily}|${String(weight)}|${String(italic)}`;
     let font = this.cache.get(key);
     if (!font) {
-      font = this.load(layer.fontFamily, bold, italic).then(async (bytes) => {
+      font = this.load(layer.fontFamily, weight, italic).then(async (bytes) => {
         if (!bytes) {
           return null;
         }
@@ -113,9 +136,9 @@ class FontSource {
     return font;
   }
 
-  private async load(family: string, bold: boolean, italic: boolean): Promise<ArrayBuffer | null> {
+  private async load(family: string, weight: number, italic: boolean): Promise<ArrayBuffer | null> {
     if (isGoogleFont(family)) {
-      const res = await fetch(`/api/fonts/file?family=${encodeURIComponent(family)}&weight=${bold ? "700" : "400"}&italic=${italic ? "1" : "0"}`);
+      const res = await fetch(`/api/fonts/file?family=${encodeURIComponent(family)}&weight=${String(weight)}&italic=${italic ? "1" : "0"}`);
       return res.ok ? res.arrayBuffer() : null;
     }
     const query = (window as { queryLocalFonts?: () => Promise<{ family: string; style: string; blob: () => Promise<Blob> }[]> }).queryLocalFonts;
@@ -123,10 +146,8 @@ class FontSource {
       return null;
     }
     try {
-      const wanted = bold && italic ? "bold italic" : bold ? "bold" : italic ? "italic" : "regular";
       const candidates = (await query()).filter((font) => font.family === family);
-      const exact = candidates.find((font) => font.style.toLowerCase() === wanted);
-      const match = exact ?? (wanted === "regular" ? candidates.find((font) => /^(normal|book|roman)$/i.test(font.style)) : undefined);
+      const match = candidates.find((font) => localFaceMatches(font.style, weight, italic));
       return match ? await (await match.blob()).arrayBuffer() : null;
     } catch {
       return null;

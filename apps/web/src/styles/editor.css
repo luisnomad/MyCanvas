@@ -265,6 +265,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+.context-bar select.context-weight {
+  width: auto;
+  max-width: 128px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.context-bar select.context-weight:hover,
+.context-bar select.context-weight:focus {
+  border-color: var(--border);
+  background-color: var(--surface-inner);
+}
+
 .context-bar input.size-input:hover,
 .context-bar input.size-input:focus {
   border-color: var(--border);

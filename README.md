@@ -54,7 +54,9 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 
 - Every font installed on your system plus a curated Google Fonts library with
   per-font favorites.
-- Bold/italic, alignment, line height, letter spacing, and fill color.
+- Font weights from Thin 100 to Black 900 (Google Fonts list only the weights
+  each family has), italic, alignment, line height, letter spacing, and fill
+  color. PDF export embeds the exact weight.
 - Curved (bent) text along an arc, in either direction.
 - Text effects — shadow, outline, echo, background, and glitch — with per-effect
   sliders for color, distance, angle, blur, spread and roundness.
