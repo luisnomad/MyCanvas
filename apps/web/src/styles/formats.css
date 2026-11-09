@@ -307,3 +307,55 @@
     gap: 0;
   }
 }
+
+.dialog.example-dialog {
+  width: 600px;
+}
+
+.example-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 12px;
+  font-size: 12.5px;
+}
+
+.example-roles {
+  margin: 8px 0 12px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.example-roles li {
+  display: grid;
+  grid-template-columns: 16px 90px 170px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.example-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.example-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.example-next {
+  font-size: 12px;
+}
+
+@media (width <= 600px) {
+  .example-roles li {
+    grid-template-columns: 16px 1fr;
+  }
+}

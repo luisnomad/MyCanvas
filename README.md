@@ -85,6 +85,18 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   so the canvas never stutters. Originals are always preserved — every AI result
   is a new, undoable asset.
 
+**Formats from an example**
+
+- "Format from example…" learns a format from a PDF with real text: page
+  size, background art (the page with its text removed), fonts with exact
+  weights (from the embedded font names; stand-ins are flagged), text
+  colours (measured from the rendered glyphs), line and paragraph spacing,
+  callout boxes, and the first picture as the image sample. Title, lead,
+  heading, body and callout are told apart by size, weight, amount of text
+  and boxes. The example page stays as a hidden reference layer.
+- Optionally, the text model (with vision when available) writes the
+  format's AI instructions: content rules and illustration style.
+
 **AI for documents (bring your own models)**
 
 - AI settings (avatar menu) per account: connections to Google Gemini,

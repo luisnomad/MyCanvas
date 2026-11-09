@@ -136,7 +136,7 @@ function blockText(block: Block): string {
 }
 
 export async function readPdf(file: File, pagePerPage: boolean): Promise<{ paragraphs: RawParagraph[]; warnings: string[]; pages: number }> {
-  const pdf = await getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pdf = await getDocument({ data: new Uint8Array(await file.arrayBuffer()), fontExtraProperties: true }).promise;
   const warnings: string[] = [];
   const pages: { blocks: Block[] }[] = [];
   for (let number = 1; number <= pdf.numPages; number++) {
@@ -149,8 +149,9 @@ export async function readPdf(file: File, pagePerPage: boolean): Promise<{ parag
     const boldFonts = new Set<string>();
     for (const fontName of new Set(items.map((item) => item.fontName))) {
       try {
-        const font = page.commonObjs.get(fontName) as { name?: string } | undefined;
-        if (font?.name && /bold|black|heavy|semibold|demi/i.test(font.name)) {
+        // Real names need fontExtraProperties; the font's own flags cover the rest.
+        const font = page.commonObjs.get(fontName) as { name?: string; bold?: boolean; black?: boolean } | undefined;
+        if (font?.bold === true || font?.black === true || (font?.name && /bold|black|heavy|semibold|demi/i.test(font.name))) {
           boldFonts.add(fontName);
         }
       } catch {

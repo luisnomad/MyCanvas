@@ -130,6 +130,8 @@ export interface TextRequest {
   prompt: string;
   /** Ask for a JSON answer (fences are stripped either way). */
   json?: boolean;
+  /** Pictures for vision models, as data: URLs (PNG/JPEG/WebP). */
+  images?: string[];
   temperature?: number;
 }
 
@@ -149,7 +151,16 @@ export async function generateText(connection: AiConnection, apiKey: string | un
         timeoutMs: 180_000,
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: request.system }] },
-          contents: [{ role: "user", parts: [{ text: request.prompt }] }],
+          contents: [{
+            role: "user",
+            parts: [
+              { text: request.prompt },
+              ...(request.images ?? []).map((url) => {
+                const [, mimeType = "image/jpeg", data = ""] = /^data:([^;]+);base64,(.*)$/s.exec(url) ?? [];
+                return { inlineData: { mimeType, data } };
+              }),
+            ],
+          }],
           generationConfig: { temperature, ...(request.json ? { responseMimeType: "application/json" } : {}) },
         }),
       }),
@@ -172,7 +183,12 @@ export async function generateText(connection: AiConnection, apiKey: string | un
           temperature,
           messages: [
             { role: "system", content: request.system },
-            { role: "user", content: request.prompt },
+            {
+              role: "user",
+              content: request.images?.length
+                ? [{ type: "text", text: request.prompt }, ...request.images.map((url) => ({ type: "image_url", image_url: { url } }))]
+                : request.prompt,
+            },
           ],
           ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
         }),

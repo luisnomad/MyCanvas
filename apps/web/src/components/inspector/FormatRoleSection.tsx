@@ -27,6 +27,8 @@ function roleKey(role: FormatRole | undefined): string {
       return "flow";
     case "hideOnLast":
       return "hideOnLast";
+    case "reference":
+      return "reference";
     case "sample":
       return `sample:${role.block}`;
     case "box":
@@ -40,6 +42,9 @@ function roleFromKey(key: string, current: FormatRole | undefined): FormatRole |
   }
   if (key === "hideOnLast") {
     return { kind: "hideOnLast" };
+  }
+  if (key === "reference") {
+    return { kind: "reference" };
   }
   const [kind, block] = key.split(":") as [string, BlockKind | undefined];
   if (kind === "sample" && block) {
@@ -58,6 +63,7 @@ const HINTS: Record<string, string> = {
   flow: "Content flows top to bottom inside this rectangle, then continues on a new page. It isn't part of the documents.",
   sample: "Shows how this kind of block looks. Its font, size, color and effects, and its distance from the flow area's edges, apply to every block of this kind.",
   box: "Drawn behind every block of this kind, with the same padding as around the sample.",
+  reference: "A guide while you edit the format, such as the example it was made from. Documents leave it out; toggle its visibility in the layers panel.",
 };
 
 /**
@@ -81,6 +87,7 @@ export function FormatRoleSection({ layer, patch, commit }: FormatRoleSectionPro
         >
           <option value="decoration">Decoration (every page)</option>
           <option value="hideOnLast">Decoration, not on the last page</option>
+          <option value="reference">Reference (never in documents)</option>
           {layer.type === "rect" && <option value="flow">Flow area</option>}
           {layer.type === "text" && textKinds.map((kind) => (
             <option key={kind.id} value={`sample:${kind.id}`}>{`Sample: ${kind.label}`}</option>

@@ -7,6 +7,7 @@ import { MoveToFolder } from "../components/folders/MoveToFolder";
 import { TemplateGallery } from "../components/TemplateGallery";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { ContentDialog } from "../components/formats/ContentDialog";
+import { FormatFromExampleDialog } from "../components/formats/FormatFromExampleDialog";
 import { UploadsManager } from "../components/uploads/UploadsManager";
 import { UserBadge } from "../components/UserBadge";
 import { ALL_DESIGNS, DESIGN_DRAG_MIME, type FolderView, folderViewHash, inView } from "../utils/folders";
@@ -47,6 +48,7 @@ export function ProjectList({ view }: { view: FolderView }) {
   const [showUploads, setShowUploads] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showNewDocument, setShowNewDocument] = useState(false);
+  const [showFromExample, setShowFromExample] = useState(false);
   const [newName, setNewName] = useState("");
   const [presetId, setPresetId] = useState(ASPECT_RATIOS[0]?.id ?? "16:9");
   const [customWidth, setCustomWidth] = useState("1280");
@@ -274,6 +276,16 @@ export function ProjectList({ view }: { view: FolderView }) {
               New document
             </button>
           )}
+          <button
+            type="button"
+            className="secondary hero-cta"
+            title="Learn a format (fonts, colours, layout) from an example PDF"
+            onClick={() => {
+              setShowFromExample(true);
+            }}
+          >
+            Format from example…
+          </button>
         </div>
       </div>
 
@@ -544,6 +556,15 @@ export function ProjectList({ view }: { view: FolderView }) {
             </div>
           </div>
         </div>
+      )}
+      {showFromExample && (
+        <FormatFromExampleDialog
+          folderId={targetFolderId}
+          onClose={() => {
+            setShowFromExample(false);
+            refresh();
+          }}
+        />
       )}
       {showNewDocument && (
         <ContentDialog

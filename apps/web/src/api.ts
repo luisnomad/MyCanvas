@@ -131,7 +131,7 @@ export const api = {
   adminAi: () => request<AdminAiSettings>("/api/admin/ai"),
   saveAdminAi: (aiLocalNetwork: string[]) => request<Pick<AdminAiSettings, "aiLocalNetwork">>("/api/admin/ai", jsonInit("PUT", { aiLocalNetwork })),
   aiStatus: () => request<{ text: boolean; image: boolean }>("/api/ai/status"),
-  aiText: (input: { system: string; prompt: string; json?: boolean; temperature?: number }) =>
+  aiText: (input: { system: string; prompt: string; json?: boolean; temperature?: number; images?: string[] }) =>
     request<{ text: string; model: string; connection: string }>("/api/ai/text", jsonInit("POST", input)),
   startAiImage: (input: { prompt: string; width: number; height: number; name?: string }) =>
     request<AiImageJob>("/api/ai/image", jsonInit("POST", input)),

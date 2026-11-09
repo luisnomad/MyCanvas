@@ -73,7 +73,11 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
 
   app.post("/api/ai/text", async (c) => {
     try {
-      const body = await c.req.json<{ system?: string; prompt?: string; json?: boolean; temperature?: number }>();
+      const body = await c.req.json<{ system?: string; prompt?: string; json?: boolean; temperature?: number; images?: unknown }>();
+      const images = Array.isArray(body.images) ? body.images : [];
+      if (images.length > 4 || !images.every((url): url is string => typeof url === "string" && /^data:image\/(?:png|jpeg|webp);base64,/.test(url) && url.length < 8_000_000)) {
+        return c.json({ error: "Up to 4 PNG/JPEG/WebP images, 6 MB each." }, 400);
+      }
       if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 200_000) {
         return c.json({ error: "Missing or oversized prompt." }, 400);
       }
@@ -83,6 +87,7 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
         prompt: body.prompt,
         json: body.json === true,
         temperature: typeof body.temperature === "number" ? Math.min(2, Math.max(0, body.temperature)) : undefined,
+        images,
       });
       return c.json({ text, model, connection: connection.name });
     } catch (error) {

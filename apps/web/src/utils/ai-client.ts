@@ -115,6 +115,8 @@ export interface TextRequest {
   prompt: string;
   json?: boolean;
   temperature?: number;
+  /** Pictures for vision models, as data: URLs. */
+  images?: string[];
 }
 
 /** Runs the text model chosen in AI settings. */
@@ -132,7 +134,12 @@ export async function aiText(request: TextRequest): Promise<string> {
       temperature: request.temperature ?? 0.2,
       messages: [
         { role: "system", content: request.system },
-        { role: "user", content: request.prompt },
+        {
+          role: "user",
+          content: request.images?.length
+            ? [{ type: "text", text: request.prompt }, ...request.images.map((url) => ({ type: "image_url", image_url: { url } }))]
+            : request.prompt,
+        },
       ],
       ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
     }),

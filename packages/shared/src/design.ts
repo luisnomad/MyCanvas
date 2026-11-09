@@ -55,12 +55,15 @@ export const BLOCK_KINDS: { id: BlockKind; label: string }[] = [
  *   a box with the same padding.
  * - hideOnLast: decoration left off the document's final page (e.g. a
  *   "next page" arrow).
+ * - reference: a guide for whoever edits the format; documents leave it out.
  */
 export type FormatRole =
   | { kind: "flow" }
   | { kind: "sample"; block: BlockKind; /** Gap above the block, px. */ spaceBefore: number }
   | { kind: "box"; block: BlockKind }
-  | { kind: "hideOnLast" };
+  | { kind: "hideOnLast" }
+  /** Shown while designing (e.g. the example a format was made from); never in documents. */
+  | { kind: "reference" };
 
 /** Mutually-exclusive text effects (Canva model: one effect or none). */
 export type TextEffect =
