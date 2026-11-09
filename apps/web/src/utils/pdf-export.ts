@@ -62,7 +62,7 @@ function hexToRgb(hex: string) {
 }
 
 /** Waits until every image on the open page has loaded and fonts are ready. */
-async function waitForPage(layers: Layer[]): Promise<void> {
+export async function waitForPage(layers: Layer[]): Promise<void> {
   await nextFrame();
   await nextFrame();
   await ensureFontsLoaded(layers.filter((layer): layer is TextLayer => layer.type === "text"));

@@ -160,6 +160,60 @@ export async function aiText(request: TextRequest): Promise<string> {
   return stripFences(text);
 }
 
+const VISION_PREFIX = "mycanvas-ai-vision:";
+
+/** A tiny all-red picture: a model that can see names the colour. */
+function probeImage(): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "#e01010";
+    context.fillRect(0, 0, 32, 32);
+  }
+  return canvas.toDataURL("image/png");
+}
+
+/**
+ * Whether the text model chosen in AI settings can see pictures. Asked once
+ * per connection and model (one tiny request), then remembered.
+ */
+export async function canSeeImages(): Promise<boolean> {
+  const choice = await assigned("text");
+  if (!choice) {
+    return false;
+  }
+  const key = `${VISION_PREFIX}${choice.connection.id}:${choice.model}`;
+  try {
+    const known = localStorage.getItem(key);
+    if (known === "yes" || known === "no") {
+      return known === "yes";
+    }
+  } catch {
+    // Storage blocked: ask every time.
+  }
+  let sees = false;
+  try {
+    const answer = await aiText({
+      system: "You answer with one word.",
+      prompt: "What colour is this picture?",
+      temperature: 0,
+      images: [probeImage()],
+    });
+    sees = /red|rojo|rouge|rot/i.test(answer);
+  } catch {
+    // Unreachable, or refused the picture: don't remember a guess.
+    return false;
+  }
+  try {
+    localStorage.setItem(key, sees ? "yes" : "no");
+  } catch {
+    // Not remembered.
+  }
+  return sees;
+}
+
 async function uploadGenerated(blob: Blob, name: string): Promise<string> {
   const extension = blob.type.includes("jpeg") ? ".jpg" : blob.type.includes("webp") ? ".webp" : ".png";
   const file = new File([blob], `${AI_IMAGE_NAME_PREFIX}${name.slice(0, 60)}${extension}`, { type: blob.type || "image/png" });

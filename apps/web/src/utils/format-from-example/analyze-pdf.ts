@@ -207,7 +207,20 @@ function groupBlocks(items: Item[]): { items: Item[]; lines: Item[][] }[] {
   return blocks;
 }
 
-export async function analyzePdf(file: File, maxPages = 2): Promise<{ pages: AnalyzedPage[]; pageCount: number }> {
+/*
+ * The text-free render switches glyph drawing off for the whole page, so a
+ * second analysis running at the same time would lose its text too. They
+ * take turns.
+ */
+let queue: Promise<unknown> = Promise.resolve();
+
+export function analyzePdf(file: File, maxPages = 2): Promise<{ pages: AnalyzedPage[]; pageCount: number }> {
+  const run = queue.then(() => analyzeNow(file, maxPages));
+  queue = run.catch(() => undefined);
+  return run;
+}
+
+async function analyzeNow(file: File, maxPages: number): Promise<{ pages: AnalyzedPage[]; pageCount: number }> {
   // fontExtraProperties: keeps each font's real name ("ABCDEF+Montserrat-Black").
   const pdf = await getDocument({ data: new Uint8Array(await file.arrayBuffer()), fontExtraProperties: true }).promise;
   const pages: AnalyzedPage[] = [];

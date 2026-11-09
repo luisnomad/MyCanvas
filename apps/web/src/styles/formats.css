@@ -359,3 +359,110 @@
     grid-template-columns: 16px 1fr;
   }
 }
+
+.dialog.review-dialog {
+  width: 620px;
+}
+
+.review-list {
+  margin: 8px 0 4px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.review-item label {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.review-item.review-dropped label {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.review-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.review-page {
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-weight: 500;
+  font-size: 11px;
+  background: var(--surface-inner);
+}
+
+.review-why {
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
+.review-note {
+  color: var(--text-secondary);
+}
+
+.review-verdict {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-style: normal;
+}
+
+.verdict-closer {
+  color: #fff;
+  background: var(--success);
+}
+
+.verdict-measured {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.verdict-judgment {
+  border: 1px solid var(--warning);
+  color: inherit;
+}
+
+.verdict-dropped {
+  border: 1px solid var(--border);
+  color: inherit;
+}
+
+.review-left {
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+
+.review-left summary {
+  cursor: pointer;
+}
+
+.review-notes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}

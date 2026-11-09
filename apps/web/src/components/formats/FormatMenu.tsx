@@ -4,6 +4,7 @@ import { useEditorStore } from "../../store/editorStore";
 import { ContentDialog } from "./ContentDialog";
 import { FormatAiDialog } from "./FormatAiDialog";
 import { FormatFontsDialog } from "./FormatFontsDialog";
+import { FormatReviewDialog } from "./FormatReviewDialog";
 import { useFormatStatus } from "./useFormatStatus";
 
 /**
@@ -11,12 +12,15 @@ import { useFormatStatus } from "./useFormatStatus";
  * "create a document" and "stop using as a format". On a document made from
  * a format: edit the content and re-flow it. Otherwise: "use as a format".
  */
+/** sessionStorage key prefix: open the AI review when this format opens. */
+export const REVIEW_ON_OPEN_PREFIX = "mycanvas-review-on-open:";
+
 export function FormatMenu() {
   const design = useEditorStore((state) => state.design);
   const setDesignKind = useEditorStore((state) => state.setDesignKind);
   const saveNow = useEditorStore((state) => state.saveNow);
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<"create" | "reflow" | "fonts" | "ai" | null>(null);
+  const [dialog, setDialog] = useState<"create" | "reflow" | "fonts" | "ai" | "review" | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const formatStatus = useFormatStatus(design?.kind === "format" ? undefined : design?.source);
 
@@ -34,6 +38,24 @@ export function FormatMenu() {
       window.removeEventListener("pointerdown", onPointerDown);
     };
   }, [open]);
+
+  const hasExample = design?.kind === "format" && [...design.layers, ...design.pages.flatMap((page) => page.layers)].some((layer) => layer.formatRole?.kind === "reference");
+
+  // "Format from example" can ask for a review as soon as the format opens.
+  useEffect(() => {
+    if (!design?.id || !hasExample) {
+      return;
+    }
+    const key = `${REVIEW_ON_OPEN_PREFIX}${design.id}`;
+    try {
+      if (sessionStorage.getItem(key)) {
+        sessionStorage.removeItem(key);
+        setDialog("review");
+      }
+    } catch {
+      // Storage blocked: the review stays in the menu.
+    }
+  }, [design?.id, hasExample]);
 
   if (!design) {
     return null;
@@ -141,6 +163,20 @@ export function FormatMenu() {
                   >
                     AI instructions…
                   </button>
+                  {hasExample && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="secondary"
+                      title="Compare with the example page it was made from and suggest fixes"
+                      onClick={() => {
+                        setOpen(false);
+                        setDialog("review");
+                      }}
+                    >
+                      Review against the example…
+                    </button>
+                  )}
                   <button
                     type="button"
                     role="menuitem"
@@ -177,6 +213,7 @@ export function FormatMenu() {
       )}
       {dialog === "fonts" && <FormatFontsDialog onClose={() => { setDialog(null); }} />}
       {dialog === "ai" && <FormatAiDialog onClose={() => { setDialog(null); }} />}
+      {dialog === "review" && <FormatReviewDialog onClose={() => { setDialog(null); }} />}
       {dialog === "create" && (
         <ContentDialog mode="create" formats={[thisFormat]} initialFormatId={design.id} folderId={design.folderId} onClose={() => { setDialog(null); }} />
       )}

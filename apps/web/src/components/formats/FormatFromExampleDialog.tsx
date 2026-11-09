@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type FormatAiInstructions } from "@mycanvas/shared";
 import { api } from "../../api";
 import { useEditorStore } from "../../store/editorStore";
+import { REVIEW_ON_OPEN_PREFIX } from "./FormatMenu";
 
 interface Built {
   roles: { kind: string; label: string; font: string; exactFont: boolean; color: string; text: string }[];
@@ -97,6 +98,21 @@ export function FormatFromExampleDialog({ folderId, onClose }: { folderId?: stri
                 </p>
                 <div className="dialog-actions">
                   <button type="button" className="secondary" onClick={onClose}>Close</button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    title="Opens the format and compares it with the example: fixes for text positions, sizes and colours (and, with an AI model that can see pictures, boxes and block kinds)"
+                    onClick={() => {
+                      try {
+                        sessionStorage.setItem(`${REVIEW_ON_OPEN_PREFIX}${built.designId}`, "1");
+                      } catch {
+                        // Storage blocked: the review is still in Format → Review against the example.
+                      }
+                      window.location.hash = `#/edit/${built.designId}`;
+                    }}
+                  >
+                    Open and review
+                  </button>
                   <button type="button" className="primary" onClick={() => { window.location.hash = `#/edit/${built.designId}`; }}>Open the format</button>
                 </div>
               </>
