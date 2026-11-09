@@ -100,6 +100,15 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 
 **Projects & export**
 
+- Multi-page designs: a Pages strip (thumbnails, drag to reorder, duplicate,
+  delete, "+" to add), "2 / 5" navigation in the bottom bar, `Cmd/Ctrl+Enter`
+  to add a page and `PageUp`/`PageDown` to move between pages; undo covers page
+  changes. Designs from before multi-page support open as one page.
+- PDF export of every page: plain text becomes real, searchable PDF text with
+  the font embedded (Google Fonts, or your own installed fonts), kerned like
+  the editor; images, shapes and styled/curved text are embedded as
+  high-resolution slices in the right stacking order.
+
 - Project list with thumbnails, search, duplicate and delete.
 - Project folders (e.g. one per customer): create, rename and delete folders,
   move designs with the Move menu or by dragging a card onto a folder, and
@@ -109,7 +118,7 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 - New designs from aspect-ratio presets, platform sizes (YouTube, Instagram,
   X, LinkedIn, A4) or any custom size up to 8192 px.
 - Templates: four built-in starters, and "Save as template" for your own.
-- Export to PNG or JPG at 0.25x–3x resolution with a JPG quality slider and a live
+- Export the current page to PNG or JPG at 0.25x–3x resolution with a JPG quality slider and a live
   file-size estimate — handy when a platform rejects an upload for being too heavy.
 - Debounced autosave with thumbnails; refresh-safe.
 - Light and dark themes, OS-aware and persisted.

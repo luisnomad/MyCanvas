@@ -35,6 +35,13 @@ const GROUPS: { title: string; items: [keys: string, action: string][] }[] = [
     ],
   },
   {
+    title: "Pages",
+    items: [
+      [`${MOD} Enter`, "Add page"],
+      ["PageUp / PageDown", "Previous / next page"],
+    ],
+  },
+  {
     title: "View",
     items: [
       ["'", "Show / hide grid"],

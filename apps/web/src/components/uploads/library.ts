@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { type AssetInfo, type AssetUsage } from "@mycanvas/shared";
 import { api } from "../../api";
 import { getCachedImageSize } from "../../hooks/useImage";
-import { useEditorStore } from "../../store/editorStore";
+import { allDesignLayers, useEditorStore } from "../../store/editorStore";
 
 export type AssetFilter = "all" | "used" | "unused" | "generated";
 
@@ -20,11 +20,12 @@ export const UPLOAD_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,image/sv
  * latest edits may not be saved yet, so the server can't know about them).
  */
 export function usageOf(info: AssetInfo): AssetUsage[] {
-  const design = useEditorStore.getState().design;
+  const { design, activePageId } = useEditorStore.getState();
   if (!design || info.usedIn.some((use) => use.kind === "design" && use.id === design.id)) {
     return info.usedIn;
   }
-  const usesIt = design.layers.some((layer) =>
+  // Every page, including unsaved edits on the open one.
+  const usesIt = allDesignLayers(design, activePageId).some((layer) =>
     (layer.type === "image" && layer.asset === info.asset) ||
     (layer.type === "frame" && layer.content?.asset === info.asset));
   return usesIt ? [{ id: design.id, name: design.name, kind: "design" }, ...info.usedIn] : info.usedIn;

@@ -2,7 +2,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { existsSync } from "node:fs";
-import { readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -10,9 +10,12 @@ import {
   type Design,
   type DesignSummary,
   type Folder,
+  type StoredDesign,
   type TemplateSummary,
   ASPECT_RATIOS,
   GENERATED_ASSET_NAMES,
+  GOOGLE_FONTS,
+  normalizeDesign,
 } from "@mycanvas/shared";
 
 import { assetUsageIndex } from "./asset-usage";
@@ -21,6 +24,7 @@ import { STARTER_TEMPLATES, findStarterTemplate } from "./starter-templates";
 import { listSystemFonts } from "./system-fonts";
 import {
   type Workspace,
+  dataDir,
   isSafeId,
   newId,
   readJsonFile,
@@ -43,6 +47,12 @@ interface FavoritesSettings {
   googleFontFavorites: string[];
 }
 
+/** Reads a design or template file in the current (multi-page) shape. */
+async function readStored(file: string): Promise<Design | null> {
+  const stored = await readJsonFile<StoredDesign>(file);
+  return stored ? normalizeDesign(stored) : null;
+}
+
 function designFile(ws: Workspace, id: string): string {
   return path.join(ws.designsDir, `${id}.json`);
 }
@@ -53,6 +63,7 @@ function toSummary(design: Design): DesignSummary {
     name: design.name,
     width: design.width,
     height: design.height,
+    pageCount: design.pages.length,
     thumbnail: design.thumbnail,
     folderId: design.folderId,
     createdAt: design.createdAt,
@@ -81,7 +92,7 @@ async function readDesign(ws: Workspace, id: string): Promise<Design | null> {
   if (!isSafeId(id)) {
     return null;
   }
-  return readJsonFile<Design>(designFile(ws, id));
+  return readStored(designFile(ws, id));
 }
 
 function templateFile(ws: Workspace, id: string): string {
@@ -97,7 +108,7 @@ async function readTemplate(ws: Workspace, id: string): Promise<Design | null> {
   if (!isSafeId(id)) {
     return null;
   }
-  return readJsonFile<Design>(templateFile(ws, id));
+  return readStored(templateFile(ws, id));
 }
 
 async function readFavorites(ws: Workspace): Promise<FavoritesSettings> {
@@ -145,7 +156,7 @@ app.get("/api/designs", async (c) => {
     if (!file.endsWith(".json")) {
       continue;
     }
-    const design = await readJsonFile<Design>(path.join(ws.designsDir, file));
+    const design = await readStored(path.join(ws.designsDir, file));
     if (design) {
       summaries.push(toSummary(design));
     }
@@ -197,8 +208,7 @@ app.post("/api/designs", async (c) => {
     name: trimmedName === undefined || trimmedName === "" ? "Untitled design" : trimmedName,
     width,
     height,
-    background: body.background ?? "#ffffff",
-    layers: [],
+    pages: [{ id: newId(), background: body.background ?? "#ffffff", layers: [] }],
     folderId,
     createdAt: now,
     updatedAt: now,
@@ -222,14 +232,16 @@ app.put("/api/designs/:id", async (c) => {
     return c.json({ error: "Not found" }, 404);
   }
   const body = await c.req.json<Partial<Design>>();
+  // An editor save may change these fields only. Identity, folder and dates
+  // stay server-owned; an empty or missing page list would lose content, so
+  // the stored pages are kept in that case.
   const design: Design = {
     ...existing,
-    ...body,
-    id: existing.id,
-    // Editor saves never move a design (it may have been moved elsewhere
-    // while open); only POST /api/designs/:id/move does.
-    folderId: existing.folderId,
-    createdAt: existing.createdAt,
+    name: typeof body.name === "string" ? body.name : existing.name,
+    width: typeof body.width === "number" ? body.width : existing.width,
+    height: typeof body.height === "number" ? body.height : existing.height,
+    thumbnail: typeof body.thumbnail === "string" ? body.thumbnail : existing.thumbnail,
+    pages: Array.isArray(body.pages) && body.pages.length > 0 ? body.pages : existing.pages,
     updatedAt: new Date().toISOString(),
   };
   await writeJsonFile(designFile(ws, design.id), design);
@@ -338,7 +350,7 @@ app.delete("/api/folders/:id", async (c) => {
     if (!file.endsWith(".json")) {
       continue;
     }
-    const design = await readJsonFile<Design>(path.join(ws.designsDir, file));
+    const design = await readStored(path.join(ws.designsDir, file));
     if (design?.folderId === id) {
       await writeJsonFile(path.join(ws.designsDir, file), { ...design, folderId: undefined });
       unfiled += 1;
@@ -363,7 +375,7 @@ app.get("/api/templates", async (c) => {
     if (!file.endsWith(".json")) {
       continue;
     }
-    const design = await readJsonFile<Design>(path.join(ws.templatesDir, file));
+    const design = await readStored(path.join(ws.templatesDir, file));
     if (design) {
       user.push(toTemplateSummary(design, false));
     }
@@ -543,6 +555,48 @@ app.get("/assets/:file", async (c) => {
 
 app.get("/api/fonts/system", async (c) => {
   return c.json(await listSystemFonts());
+});
+
+const googleFamilies = new Set(GOOGLE_FONTS.map((font) => font.family));
+const fontCacheDir = path.join(dataDir, "font-cache");
+
+/**
+ * A Google Font as a TrueType file, for embedding real text in PDF exports.
+ * Only families from the curated list; files are public, so the cache is
+ * shared by every workspace.
+ */
+app.get("/api/fonts/file", async (c) => {
+  const family = c.req.query("family") ?? "";
+  const weight = c.req.query("weight") === "700" ? 700 : 400;
+  const italic = c.req.query("italic") === "1" ? 1 : 0;
+  if (!googleFamilies.has(family)) {
+    return c.json({ error: "Not a Google font" }, 404);
+  }
+  const cacheFile = path.join(fontCacheDir, `${family.replace(/[^A-Za-z0-9]+/g, "_")}-${String(weight)}-${String(italic)}.ttf`);
+  const headers = { "Content-Type": "font/ttf", "Cache-Control": "private, max-age=604800" };
+  try {
+    return c.body(await readFile(cacheFile), 200, headers);
+  } catch {
+    // Not cached yet.
+  }
+  // A plain user agent makes Google Fonts serve TTF (browsers get WOFF2).
+  const css = await fetch(
+    `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@${String(italic)},${String(weight)}`,
+    { headers: { "User-Agent": "MyCanvas font embedding" } },
+  );
+  const url = css.ok ? /url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.ttf)\)/.exec(await css.text())?.[1] : undefined;
+  if (!url) {
+    // The family has no such weight/style.
+    return c.json({ error: "Font style not available" }, 404);
+  }
+  const file = await fetch(url);
+  if (!file.ok) {
+    return c.json({ error: "Font download failed" }, 502);
+  }
+  const bytes = Buffer.from(await file.arrayBuffer());
+  await mkdir(fontCacheDir, { recursive: true });
+  await writeFile(cacheFile, bytes);
+  return c.body(bytes, 200, headers);
 });
 
 app.get("/api/fonts/favorites", async (c) => {

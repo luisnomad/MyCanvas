@@ -203,6 +203,51 @@ describe("project folders", () => {
   });
 });
 
+describe("multi-page designs", () => {
+  const json = (email: string, method: string, body: unknown): RequestInit =>
+    as(email, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  it("opens single-page files from before multi-page support as one page", async () => {
+    const dir = path.join(dataDir, "users", "alice-example-com", "designs");
+    await writeFile(path.join(dir, "legacy01.json"), JSON.stringify({
+      id: "legacy01", name: "Old one", width: 100, height: 100, background: "#ff0000",
+      layers: [{ id: "l1", type: "rect", name: "R", x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, visible: true,
+        width: 10, height: 10, fill: "#000", cornerRadius: 0, stroke: { enabled: false, color: "#000", width: 1 },
+        shadow: { enabled: false, color: "#000", blur: 0, offsetX: 0, offsetY: 0, opacity: 1 } }],
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    const design = (await (await app.request("/api/designs/legacy01", as(ALICE))).json()) as Record<string, unknown> & { pages: { background: string; layers: unknown[] }[] };
+    expect(design.pages).toHaveLength(1);
+    expect(design.pages[0]).toMatchObject({ background: "#ff0000" });
+    expect(design.pages[0]?.layers).toHaveLength(1);
+    expect(design.layers).toBeUndefined();
+    const summary = ((await (await app.request("/api/designs", as(ALICE))).json()) as { id: string; pageCount: number }[])
+      .find((entry) => entry.id === "legacy01");
+    expect(summary?.pageCount).toBe(1);
+  });
+
+  it("saves pages, never drops them, and tracks image use on every page", async () => {
+    const { id } = (await (await app.request("/api/designs", json(ALICE, "POST", { name: "Deck" }))).json()) as { id: string };
+    const image = (asset: string) => ({ id: `img-${asset}`, type: "image", name: "i", x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1,
+      visible: true, asset, width: 10, height: 10, shadow: { enabled: false, color: "#000", blur: 0, offsetX: 0, offsetY: 0, opacity: 1 } });
+    const pages = [
+      { id: "p1", background: "#fff", layers: [] },
+      { id: "p2", background: "#000", layers: [image("aaaaaaaaaaaaaaaa.png")] },
+    ];
+    expect((await app.request(`/api/designs/${id}`, json(ALICE, "PUT", { pages }))).status).toBe(200);
+    // A save without pages (or with none) keeps the stored ones.
+    await app.request(`/api/designs/${id}`, json(ALICE, "PUT", { name: "Deck v2", pages: [] }));
+    const saved = (await (await app.request(`/api/designs/${id}`, as(ALICE))).json()) as { name: string; pages: unknown[] };
+    expect(saved.name).toBe("Deck v2");
+    expect(saved.pages).toHaveLength(2);
+    // Upload usage sees the image on page 2.
+    await mkdir(path.join(dataDir, "users", "alice-example-com", "assets"), { recursive: true });
+    await writeFile(path.join(dataDir, "users", "alice-example-com", "assets", "aaaaaaaaaaaaaaaa.png"), "x");
+    const assets = (await (await app.request("/api/assets", as(ALICE))).json()) as { asset: string; usedIn: { id: string }[] }[];
+    expect(assets.find((entry) => entry.asset === "aaaaaaaaaaaaaaaa.png")?.usedIn.map((use) => use.id)).toContain(id);
+  });
+});
+
 describe("legacy data migration", () => {
   it("moves pre-workspace data into the owner's workspace once", async () => {
     const legacyDir = await mkdtemp(path.join(tmpdir(), "mycanvas-legacy-"));

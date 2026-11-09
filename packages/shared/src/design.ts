@@ -205,24 +205,67 @@ export interface FrameLayer extends LayerBase {
 export type Layer = TextLayer | ImageLayer | RectLayer | LineLayer | ShapeLayer | FrameLayer;
 export type LayerType = Layer["type"];
 
-export interface Design {
-  id: string;
-  name: string;
-  width: number;
-  height: number;
-  /** Canvas background color, or "transparent". */
+/** What one page of a design shows. */
+export interface PageContent {
+  /** Page background color, or "transparent". */
   background: string;
   /** Overrides `background` when present (ignored while transparent). */
   backgroundGradient?: GradientFill;
   /** Layers in z-order: index 0 is the bottom-most layer. */
   layers: Layer[];
-  /** Small data-URL preview rendered by the editor on save. */
+}
+
+/** One page of a multi-page design; every page shares the design's size. */
+export interface DesignPage extends PageContent {
+  id: string;
+  /** Small data-URL preview, refreshed when the page is saved while open. */
+  thumbnail?: string;
+}
+
+export interface Design {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  /** One or more pages, in order. */
+  pages: DesignPage[];
+  /** Small data-URL preview of the first page, for the project list. */
   thumbnail?: string;
   /** Project folder (e.g. a customer); absent = unfiled. Changed only through
    *  the move endpoint, never by editor saves. */
   folderId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A design as stored on disk: older files keep one page's content inline. */
+export type StoredDesign = Omit<Design, "pages"> & Partial<PageContent> & { pages?: DesignPage[] };
+
+/**
+ * Brings a stored design to the current shape. Single-page designs from
+ * before multi-page support become one page; legacy inline fields are
+ * dropped so they can never disagree with `pages`.
+ */
+export function normalizeDesign(stored: StoredDesign): Design {
+  const { background, backgroundGradient, layers, pages, ...rest } = stored;
+  if (pages && pages.length > 0) {
+    return { ...rest, pages };
+  }
+  return {
+    ...rest,
+    pages: [{
+      id: "page-1",
+      background: background ?? "#ffffff",
+      backgroundGradient,
+      layers: layers ?? [],
+      thumbnail: rest.thumbnail,
+    }],
+  };
+}
+
+/** Every layer on every page (for asset usage and similar scans). */
+export function allLayers(design: Pick<Design, "pages">): Layer[] {
+  return design.pages.flatMap((page) => page.layers);
 }
 
 /** A project folder in a person's workspace, e.g. one per customer. */
@@ -238,6 +281,7 @@ export interface DesignSummary {
   folderId?: string;
   width: number;
   height: number;
+  pageCount: number;
   thumbnail?: string;
   createdAt: string;
   updatedAt: string;

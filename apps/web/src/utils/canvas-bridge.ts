@@ -12,6 +12,8 @@ interface CanvasBridge {
   exportImage: (options: ExportImageOptions) => string;
   makeThumbnail: () => string | null;
   getLayerNode: (id: string) => Konva.Node | null;
+  /** The Konva layer holding the page's content (background + layers). */
+  getContentLayer: () => Konva.Layer | null;
 }
 
 let bridge: CanvasBridge | null = null;
@@ -30,6 +32,11 @@ export function exportDesignImage(options: ExportImageOptions): string {
 
 export function makeDesignThumbnail(): string | null {
   return bridge ? bridge.makeThumbnail() : null;
+}
+
+/** The open page's content layer (PDF export renders slices of it). */
+export function getContentLayer(): Konva.Layer | null {
+  return bridge ? bridge.getContentLayer() : null;
 }
 
 /** Live Konva node for a layer id (for rendered-bounds math like alignment). */

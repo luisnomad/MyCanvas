@@ -1,5 +1,5 @@
 import { Vibrant } from "node-vibrant/browser";
-import { type Design, type ImageLayer } from "@mycanvas/shared";
+import { type Design, type ImageLayer, type PageContent } from "@mycanvas/shared";
 
 export function paletteCacheKey(layer: ImageLayer): string {
   const crop = layer.crop;
@@ -16,7 +16,7 @@ export interface RankedPhoto {
  * Ranks visible image layers for palette prominence: dominant background
  * coverage, then area, z-order and centrality.
  */
-export function rankedPhotoLayers(design: Design): RankedPhoto[] {
+export function rankedPhotoLayers(design: Design & PageContent): RankedPhoto[] {
   const images = design.layers.filter((layer): layer is ImageLayer => layer.type === "image" && layer.visible);
   const canvasArea = design.width * design.height;
   const maxDist = Math.hypot(design.width / 2, design.height / 2);

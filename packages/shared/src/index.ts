@@ -5,6 +5,7 @@ export { ASPECT_RATIOS } from "./aspect-ratios";
 export type {
   BehindText,
   Design,
+  DesignPage,
   DesignSummary,
   Folder,
   FrameContent,
@@ -14,6 +15,7 @@ export type {
   ImageAdjustments,
   ImageCrop,
   ImageFilterPreset,
+  PageContent,
   ImageLayer,
   Layer,
   LayerType,
@@ -22,11 +24,12 @@ export type {
   ShadowEffect,
   ShapeKind,
   ShapeLayer,
+  StoredDesign,
   StrokeEffect,
   TextEffect,
   TextLayer,
 } from "./design";
-export { defaultShadow, defaultStroke, defaultTextEffect } from "./design";
+export { allLayers, defaultShadow, defaultStroke, defaultTextEffect, normalizeDesign } from "./design";
 export type { GoogleFont } from "./google-fonts";
 export { GOOGLE_FONTS } from "./google-fonts";
 export type { SizePreset, TemplateSummary } from "./templates";

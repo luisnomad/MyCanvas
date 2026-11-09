@@ -1,4 +1,4 @@
-import { type Design } from "@mycanvas/shared";
+import { type Design, type PageContent } from "@mycanvas/shared";
 
 /**
  * Normalizes "#rgb", "#rrggbb" and "rgb(r, g, b)" to lowercase "#rrggbb".
@@ -27,7 +27,7 @@ export function normalizeColor(input: string): string | null {
 }
 
 /** Colors used anywhere in the open design, deduped case-insensitively, first-use order. */
-export function collectDesignColors(design: Design): string[] {
+export function collectDesignColors(design: Design & PageContent): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (color: string | undefined) => {

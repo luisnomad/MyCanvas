@@ -1492,3 +1492,145 @@ input.bg-color {
   font-size: 11px;
   line-height: 1.4;
 }
+
+/* Pages: bottom-bar navigation and thumbnail strip */
+
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.page-position {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.pages-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 10px 16px;
+  overflow-x: auto;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.page-card {
+  position: relative;
+  flex: none;
+  height: 76px;
+  border-radius: 6px;
+}
+
+.page-card-open {
+  display: block;
+  height: 100%;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-inner);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.page-card.active .page-card-open {
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+.page-card-open img,
+.page-thumb-blank {
+  display: block;
+  height: 100%;
+  width: auto;
+}
+
+.page-thumb-blank {
+  min-width: 40px;
+  background:
+    repeating-conic-gradient(var(--surface-inner) 0% 25%, var(--surface) 0% 50%) 50% / 10px 10px;
+}
+
+.page-card-number {
+  position: absolute;
+  left: 5px;
+  bottom: 4px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  color: #ffffff;
+  background: rgb(0 0 0 / 55%);
+  pointer-events: none;
+}
+
+.page-card-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.page-card:hover .page-card-actions,
+.page-card:focus-within .page-card-actions {
+  opacity: 1;
+}
+
+.page-card-actions button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: #ffffff;
+  background: rgb(0 0 0 / 55%);
+}
+
+.page-card-actions button:disabled {
+  opacity: 0.35;
+}
+
+.page-card.drop-before::before,
+.page-card.drop-after::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.page-card.drop-before::before {
+  left: -7px;
+}
+
+.page-card.drop-after::after {
+  right: -7px;
+}
+
+.page-add {
+  width: 56px;
+  border: 2px dashed var(--border);
+  background: transparent;
+  font-size: 24px;
+  color: var(--text-secondary);
+}
+
+.page-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

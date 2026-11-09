@@ -12,6 +12,8 @@ import { ShortcutsDialog } from "../components/ShortcutsDialog";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { UserBadge } from "../components/UserBadge";
 import { ViewMenu } from "../components/ViewMenu";
+import { PageNav } from "../components/pages/PageNav";
+import { PagesStrip } from "../components/pages/PagesStrip";
 import { useEditorStore } from "../store/editorStore";
 import { useViewSettings } from "../store/viewSettings";
 import { api } from "../api";
@@ -29,6 +31,14 @@ export function Editor({ designId }: { designId: string }) {
   const [zoom, setZoom] = useState<number | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const pageCount = useEditorStore((state) => state.design?.pages.length ?? 0);
+  const [stripOpen, setStripOpen] = useState(false);
+  // Show the page thumbnails as soon as a design has more than one page.
+  useEffect(() => {
+    if (pageCount > 1) {
+      setStripOpen(true);
+    }
+  }, [pageCount]);
   const designFolderId = useEditorStore((state) => state.design?.folderId);
   const [folderName, setFolderName] = useState<string | null>(null);
 
@@ -99,6 +109,21 @@ export function Editor({ designId }: { designId: string }) {
         return;
       }
       if (inField || !state.design) {
+        return;
+      }
+      if (mod && e.key === "Enter") {
+        e.preventDefault();
+        state.addPage();
+        return;
+      }
+      if (!mod && (e.key === "PageUp" || e.key === "PageDown")) {
+        e.preventDefault();
+        const pages = state.design.pages;
+        const index = pages.findIndex((page) => page.id === state.activePageId);
+        const target = pages[index + (e.key === "PageUp" ? -1 : 1)];
+        if (target) {
+          state.setActivePage(target.id);
+        }
         return;
       }
       if (!mod && e.key === "?") {
@@ -321,6 +346,7 @@ export function Editor({ designId }: { designId: string }) {
           <div className="canvas-wrap">
             <CanvasStage design={design} scale={effectiveScale} onFitScale={handleFitScale} />
           </div>
+          {stripOpen && <PagesStrip />}
           <div className="editor-bottom">
             <button
               type="button"
@@ -332,6 +358,7 @@ export function Editor({ designId }: { designId: string }) {
               ?
             </button>
             <ViewMenu />
+            <PageNav stripOpen={stripOpen} onToggleStrip={() => { setStripOpen((open) => !open); }} />
             <span className="top-bar-spacer" />
             <input
               type="range"

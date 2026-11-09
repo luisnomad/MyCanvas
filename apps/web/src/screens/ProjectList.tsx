@@ -351,7 +351,7 @@ export function ProjectList({ view }: { view: FolderView }) {
               <div className="design-meta">
                 <strong>{design.name}</strong>
                 <span className="muted">
-                  {`${String(design.width)} × ${String(design.height)} · ${relativeEditedTime(design.updatedAt)}`}
+                  {`${String(design.width)} × ${String(design.height)}${design.pageCount > 1 ? ` · ${String(design.pageCount)} pages` : ""} · ${relativeEditedTime(design.updatedAt)}`}
                 </span>
               </div>
               <div className="design-actions">

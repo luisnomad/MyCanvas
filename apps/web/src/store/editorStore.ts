@@ -1,13 +1,16 @@
 import {
   type Design,
+  type DesignPage,
   type FrameLayer,
   type GradientFill,
   type ImageLayer,
   type Layer,
   type LineLayer,
   type RectLayer,
+  type PageContent,
   type TextLayer,
   defaultShadow,
+  normalizeDesign,
 } from "@mycanvas/shared";
 import { create } from "zustand";
 import { ApiError, api } from "../api";
@@ -17,10 +20,52 @@ import { ensureFontsLoaded } from "../utils/fonts";
 export type SaveStatus = "saved" | "saving" | "dirty";
 export type LoadStatus = "loading" | "ready" | "not-found" | "error";
 
+/**
+ * The design being edited. Its top-level `layers`/`background` are the
+ * ACTIVE page, live — so everything that edits "the canvas" keeps working.
+ * `pages` holds every page; the active entry is refreshed from the live
+ * fields whenever pages are read as a whole (see syncedPages).
+ */
+export type EditorDesign = Design & PageContent;
+
+/** History entry: every page plus which one was open. */
 interface Snapshot {
-  layers: Layer[];
-  background: string;
-  backgroundGradient?: GradientFill;
+  pages: DesignPage[];
+  activePageId: string;
+}
+
+/**
+ * All pages with the active one brought up to date from the live fields.
+ * `thumbnail` (when given) refreshes the active page's preview, e.g. the
+ * canvas as it looks right before switching away from it.
+ */
+export function syncedPages(design: EditorDesign, activePageId: string, thumbnail?: string | null): DesignPage[] {
+  return design.pages.map((page) =>
+    page.id === activePageId
+      ? {
+          ...page,
+          layers: design.layers,
+          background: design.background,
+          backgroundGradient: design.backgroundGradient,
+          thumbnail: thumbnail ?? page.thumbnail,
+        }
+      : page);
+}
+
+/** Opens `pageId` in the editor: its content becomes the live fields. */
+function withActivePage(design: Design, pageId: string): EditorDesign {
+  const page = design.pages.find((entry) => entry.id === pageId) ?? design.pages[0];
+  return {
+    ...design,
+    layers: page?.layers ?? [],
+    background: page?.background ?? "#ffffff",
+    backgroundGradient: page?.backgroundGradient,
+  };
+}
+
+/** Every layer on every page, live (upload usage, fonts, colors). */
+export function allDesignLayers(design: EditorDesign, activePageId: string): Layer[] {
+  return syncedPages(design, activePageId).flatMap((page) => page.layers);
 }
 
 /** Any subset of layer-specific fields; only the keys matching the layer type are applied in practice. */
@@ -40,7 +85,9 @@ const HISTORY_LIMIT = 100;
 const AUTOSAVE_DELAY_MS = 800;
 
 export interface EditorStore {
-  design: Design | null;
+  design: EditorDesign | null;
+  /** The page shown on the canvas. */
+  activePageId: string;
   loadStatus: LoadStatus;
   saveStatus: SaveStatus;
   /** Selection set in click order; the last entry is the "primary" layer. */
@@ -122,6 +169,14 @@ export interface EditorStore {
   undo: () => void;
   redo: () => void;
   saveNow: () => Promise<void>;
+  /** Show another page (not an edit: no history entry). */
+  setActivePage: (pageId: string) => void;
+  /** New page after the active one (blank with the same background, or a copy), opened. */
+  addPage: (options?: { duplicate?: boolean }) => void;
+  /** Removes a page (never the last one) and opens its neighbor. */
+  deletePage: (pageId: string) => void;
+  /** Moves a page to a new position (0-based). */
+  movePage: (pageId: string, toIndex: number) => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -160,12 +215,90 @@ function nextImageName(layers: Layer[]): string {
   return `image_${String(maxIndex + 1)}`;
 }
 
+/**
+ * Migrates legacy per-field shadow/stroke toggles on text layers to the
+ * mutually-exclusive effect model (one effect or none).
+ */
+function migrateTextEffect(layer: Layer): Layer {
+  if (layer.type !== "text" || layer.effect) {
+    return layer;
+  }
+  if (layer.shadow.enabled) {
+    const distance = Math.round(Math.hypot(layer.shadow.offsetX, layer.shadow.offsetY));
+    const angle = Math.round((Math.atan2(layer.shadow.offsetY, layer.shadow.offsetX) * 180) / Math.PI);
+    return {
+      ...layer,
+      effect: {
+        type: "shadow",
+        color: layer.shadow.color,
+        distance,
+        angle,
+        blur: layer.shadow.blur,
+        opacity: layer.shadow.opacity,
+      },
+    };
+  }
+  if (layer.stroke.enabled) {
+    return { ...layer, effect: { type: "outline", color: layer.stroke.color, thickness: layer.stroke.width } };
+  }
+  return { ...layer, effect: { type: "none" } };
+}
+
+/** A copy of a page's content with fresh layer and group ids. */
+function clonePageContent(page: PageContent): PageContent {
+  const groupIds = new Map<string, string>();
+  return {
+    background: page.background,
+    backgroundGradient: structuredClone(page.backgroundGradient),
+    layers: page.layers.map((layer) => {
+      const copy = structuredClone(layer);
+      copy.id = newLayerId();
+      if (copy.groupId) {
+        const mapped = groupIds.get(copy.groupId) ?? newLayerId();
+        groupIds.set(copy.groupId, mapped);
+        copy.groupId = mapped;
+      }
+      return copy;
+    }),
+  };
+}
+
 export const useEditorStore = create<EditorStore>()((set, get) => {
-  const snapshotOf = (design: Design): Snapshot => ({
-    layers: structuredClone(design.layers),
-    background: design.background,
-    backgroundGradient: structuredClone(design.backgroundGradient),
-  });
+  const snapshotOf = (design: EditorDesign): Snapshot => {
+    const activePageId = get().activePageId;
+    return { pages: structuredClone(syncedPages(design, activePageId)), activePageId };
+  };
+
+  /** Puts a history entry back: its pages, with its page open. */
+  const restore = (design: EditorDesign, snapshot: Snapshot) => {
+    set({
+      design: withActivePage({ ...design, pages: snapshot.pages }, snapshot.activePageId),
+      activePageId: snapshot.activePageId,
+      selectedLayerIds: [],
+      editingGroupId: null,
+      editingTextLayerId: null,
+      editingFrameId: null,
+    });
+  };
+
+  /**
+   * Page-level edit (add/delete/move): one history entry, then the new page
+   * list with `activePageId` open.
+   */
+  const changePages = (fn: (pages: DesignPage[], activePageId: string) => { pages: DesignPage[]; activePageId: string } | null) => {
+    get().commitTransient();
+    const design = get().design;
+    if (!design) {
+      return;
+    }
+    const result = fn(syncedPages(design, get().activePageId, makeDesignThumbnail()), get().activePageId);
+    if (!result) {
+      return;
+    }
+    pushHistory();
+    restore(design, result);
+    markDirty();
+  };
 
   const markDirty = () => {
     if (get().saveStatus !== "dirty") {
@@ -195,7 +328,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
    * history entry immediately; transient ones (slider/color drags) capture a
    * pending snapshot on the first change, pushed by commitTransient().
    */
-  const mutate = (fn: (design: Design) => Pick<Snapshot, "layers"> | Snapshot, transient: boolean) => {
+  const mutate = (fn: (design: EditorDesign) => Pick<PageContent, "layers"> | PageContent, transient: boolean) => {
     const design = get().design;
     if (!design) {
       return;
@@ -217,6 +350,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
 
   return {
     design: null,
+    activePageId: "",
     loadStatus: "loading",
     saveStatus: "saved",
     selectedLayerIds: [],
@@ -245,35 +379,12 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         contextMenu: null,
       });
       try {
-        const design = await api.getDesign(id);
-        // Migrate legacy per-field shadow/stroke toggles on text layers to the
-        // mutually-exclusive effect model (one effect or none).
-        design.layers = design.layers.map((layer) => {
-          if (layer.type !== "text" || layer.effect) {
-            return layer;
-          }
-          if (layer.shadow.enabled) {
-            const distance = Math.round(Math.hypot(layer.shadow.offsetX, layer.shadow.offsetY));
-            const angle = Math.round((Math.atan2(layer.shadow.offsetY, layer.shadow.offsetX) * 180) / Math.PI);
-            return {
-              ...layer,
-              effect: {
-                type: "shadow",
-                color: layer.shadow.color,
-                distance,
-                angle,
-                blur: layer.shadow.blur,
-                opacity: layer.shadow.opacity,
-              },
-            };
-          }
-          if (layer.stroke.enabled) {
-            return { ...layer, effect: { type: "outline", color: layer.stroke.color, thickness: layer.stroke.width } };
-          }
-          return { ...layer, effect: { type: "none" } };
-        });
-        set({ design, loadStatus: "ready" });
-        const families = design.layers
+        const design = normalizeDesign(await api.getDesign(id));
+        design.pages = design.pages.map((page) => ({ ...page, layers: page.layers.map(migrateTextEffect) }));
+        const firstPageId = design.pages[0]?.id ?? "";
+        set({ design: withActivePage(design, firstPageId), activePageId: firstPageId, loadStatus: "ready" });
+        const families = design.pages
+          .flatMap((page) => page.layers)
           .filter((layer): layer is TextLayer => layer.type === "text")
           .map((layer) => layer.fontFamily);
         void ensureFontsLoaded(families);
@@ -812,13 +923,8 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       set({
         past: state.past.slice(0, -1),
         future: [...state.future, snapshotOf(design)],
-        design: {
-          ...design,
-          layers: previous.layers,
-          background: previous.background,
-          backgroundGradient: previous.backgroundGradient,
-        },
       });
+      restore(design, previous);
       markDirty();
     },
 
@@ -832,13 +938,8 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       set({
         future: state.future.slice(0, -1),
         past: [...state.past, snapshotOf(design)],
-        design: {
-          ...design,
-          layers: next.layers,
-          background: next.background,
-          backgroundGradient: next.backgroundGradient,
-        },
       });
+      restore(design, next);
       markDirty();
     },
 
@@ -853,17 +954,106 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       }
       set({ saveStatus: "saving" });
       try {
+        // The open page gets a fresh preview; the first page's preview also
+        // represents the design in the project list.
+        const activePageId = get().activePageId;
         const thumbnail = makeDesignThumbnail();
-        const payload: Design = thumbnail ? { ...design, thumbnail } : design;
+        const pages = syncedPages(design, activePageId).map((page) =>
+          page.id === activePageId && thumbnail ? { ...page, thumbnail } : page);
+        const { layers: _layers, background: _background, backgroundGradient: _gradient, ...meta } = design;
+        const payload: Design = {
+          ...meta,
+          pages,
+          thumbnail: pages[0]?.thumbnail ?? design.thumbnail,
+        };
         const saved = await api.updateDesign(design.id, payload);
         const current = get().design;
         set({
-          saveStatus: "saved",
-          ...(current ? { design: { ...current, updatedAt: saved.updatedAt } } : {}),
+          saveStatus: get().saveStatus === "saving" ? "saved" : get().saveStatus,
+          ...(current
+            ? {
+                design: {
+                  ...current,
+                  updatedAt: saved.updatedAt,
+                  thumbnail: payload.thumbnail,
+                  // Keep the new preview without touching newer edits.
+                  pages: current.pages.map((page) =>
+                    page.id === activePageId && thumbnail ? { ...page, thumbnail } : page),
+                },
+              }
+            : {}),
         });
       } catch {
         set({ saveStatus: "dirty" });
       }
     },
+
+    setActivePage: (pageId) => {
+      const state = get();
+      const design = state.design;
+      if (!design || pageId === state.activePageId || !design.pages.some((page) => page.id === pageId)) {
+        return;
+      }
+      state.commitTransient();
+      // Keep the strip's preview of the page being left current.
+      const pages = syncedPages(design, state.activePageId, makeDesignThumbnail());
+      set({
+        design: withActivePage({ ...design, pages }, pageId),
+        activePageId: pageId,
+        selectedLayerIds: [],
+        editingGroupId: null,
+        editingTextLayerId: null,
+        editingFrameId: null,
+        contextMenu: null,
+      });
+    },
+
+    addPage: (options = {}) => {
+      changePages((pages, activePageId) => {
+        const index = pages.findIndex((page) => page.id === activePageId);
+        const current = pages[index];
+        if (!current) {
+          return null;
+        }
+        const content: PageContent = options.duplicate
+          ? clonePageContent(current)
+          : { background: current.background, backgroundGradient: structuredClone(current.backgroundGradient), layers: [] };
+        const page: DesignPage = { id: newLayerId(), ...content, thumbnail: options.duplicate ? current.thumbnail : undefined };
+        return { pages: [...pages.slice(0, index + 1), page, ...pages.slice(index + 1)], activePageId: page.id };
+      });
+    },
+
+    deletePage: (pageId) => {
+      changePages((pages, activePageId) => {
+        const index = pages.findIndex((page) => page.id === pageId);
+        if (index < 0 || pages.length <= 1) {
+          return null;
+        }
+        const remaining = pages.filter((page) => page.id !== pageId);
+        const neighbor = remaining[Math.min(index, remaining.length - 1)];
+        return {
+          pages: remaining,
+          activePageId: pageId === activePageId ? (neighbor?.id ?? activePageId) : activePageId,
+        };
+      });
+    },
+
+    movePage: (pageId, toIndex) => {
+      changePages((pages, activePageId) => {
+        const from = pages.findIndex((page) => page.id === pageId);
+        const to = Math.max(0, Math.min(pages.length - 1, toIndex));
+        const page = pages[from];
+        if (!page || from === to) {
+          return null;
+        }
+        const rest = pages.filter((entry) => entry.id !== pageId);
+        return { pages: [...rest.slice(0, to), page, ...rest.slice(to)], activePageId };
+      });
+    },
   };
 });
+
+// Dev builds only: lets the browser console inspect editor state.
+if (import.meta.env.DEV) {
+  (window as unknown as { __mycanvasStore?: typeof useEditorStore }).__mycanvasStore = useEditorStore;
+}

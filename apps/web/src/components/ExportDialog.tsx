@@ -19,8 +19,11 @@ function formatBytes(bytes: number): string {
 
 export function ExportDialog({ onClose }: ExportDialogProps) {
   const design = useEditorStore((state) => state.design);
-  const [format, setFormat] = useState<"png" | "jpeg">("png");
+  const activePageId = useEditorStore((state) => state.activePageId);
+  const [format, setFormat] = useState<"png" | "jpeg" | "pdf">("png");
   const [ratio, setRatio] = useState("1");
+  const [progress, setProgress] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [quality, setQuality] = useState(0.8);
   const [busy, setBusy] = useState(false);
   const [estimate, setEstimate] = useState<string | null>(null);
@@ -30,7 +33,8 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
   // Live size estimate: run the same export path (debounced) and approximate
   // the decoded file size from the base64 payload length.
   useEffect(() => {
-    if (!design) {
+    if (!design || format === "pdf") {
+      setEstimate(null);
       return;
     }
     const timer = setTimeout(() => {
@@ -59,7 +63,41 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
 
   const outWidth = Math.round(design.width * multiplier);
   const outHeight = Math.round(design.height * multiplier);
-  const outputSummary = `Output: ${String(outWidth)} × ${String(outHeight)} px${estimate ? ` · ${estimate}` : ""}`;
+  const pageCount = design.pages.length;
+  const pageNumber = design.pages.findIndex((page) => page.id === activePageId) + 1;
+  const baseName = design.name.trim() || "design";
+  const outputSummary = format === "pdf"
+    ? `${String(pageCount)} ${pageCount === 1 ? "page" : "pages"} · plain text stays real, searchable text; images and effects at ${String(multiplier)}x`
+    : `Output: ${String(outWidth)} × ${String(outHeight)} px${estimate ? ` · ${estimate}` : ""}${pageCount > 1 ? ` · page ${String(pageNumber)} of ${String(pageCount)}` : ""}`;
+
+  const download = (href: string, filename: string) => {
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = filename;
+    anchor.click();
+  };
+
+  const doExportPdf = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      // Loaded on demand: the PDF/font libraries are large.
+      const { exportDesignPdf } = await import("../utils/pdf-export");
+      const bytes = await exportDesignPdf({
+        pixelRatio: multiplier,
+        onProgress: (page, total) => { setProgress(`Page ${String(page)} of ${String(total)}…`); },
+      });
+      const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
+      download(url, `${baseName}.pdf`);
+      setTimeout(() => { URL.revokeObjectURL(url); }, 10000);
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "PDF export failed");
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
 
   const doExport = async () => {
     setBusy(true);
@@ -75,10 +113,8 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
         pixelRatio: multiplier,
         flattenWhite: format === "jpeg" && design.background === "transparent",
       });
-      const anchor = document.createElement("a");
-      anchor.href = dataUrl;
-      anchor.download = `${design.name.trim() || "design"}.${format === "png" ? "png" : "jpg"}`;
-      anchor.click();
+      const suffix = pageCount > 1 ? `-page-${String(pageNumber)}` : "";
+      download(dataUrl, `${baseName}${suffix}.${format === "png" ? "png" : "jpg"}`);
       onClose();
     } finally {
       setBusy(false);
@@ -101,15 +137,21 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
           <select
             value={format}
             onChange={(e) => {
-              setFormat(e.target.value === "jpeg" ? "jpeg" : "png");
+              const next = e.target.value === "jpeg" ? "jpeg" : e.target.value === "pdf" ? "pdf" : "png";
+              setFormat(next);
+              if (next === "pdf" && ratio === "1") {
+                // Image slices look soft at 1x in a PDF zoomed on screen.
+                setRatio("2");
+              }
             }}
           >
             <option value="png">PNG</option>
             <option value="jpeg">JPG</option>
+            <option value="pdf">{pageCount > 1 ? `PDF (all ${String(pageCount)} pages)` : "PDF"}</option>
           </select>
         </label>
         <label className="field field-wide">
-          <span>Scale</span>
+          <span>{format === "pdf" ? "Image resolution" : "Scale"}</span>
           <select
             value={ratio}
             onChange={(e) => {
@@ -141,7 +183,8 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
             />
           </label>
         )}
-        <p className="muted">{outputSummary}</p>
+        <p className="muted">{progress ?? outputSummary}</p>
+        {error && <p className="form-error">{error}</p>}
         <div className="dialog-actions">
           <button type="button" className="secondary" onClick={onClose}>
             Cancel
@@ -151,7 +194,7 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
             className="primary"
             disabled={busy}
             onClick={() => {
-              void doExport();
+              void (format === "pdf" ? doExportPdf() : doExport());
             }}
           >
             {busy ? "Exporting…" : "Export"}

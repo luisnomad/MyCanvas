@@ -1,0 +1,375 @@
+import fontkit from "@pdf-lib/fontkit";
+import Konva from "konva";
+import {
+  type PDFFont,
+  type PDFPage,
+  PDFDocument,
+  concatTransformationMatrix,
+  popGraphicsState,
+  pushGraphicsState,
+  rgb,
+  setCharacterSpacing,
+} from "pdf-lib";
+import { type Layer, type TextLayer } from "@mycanvas/shared";
+import { useEditorStore } from "../store/editorStore";
+import { TEXT_MAIN_NAME } from "./behind-text";
+import { getContentLayer, getLayerNode } from "./canvas-bridge";
+import { ensureFontsLoaded, isGoogleFont } from "./fonts";
+
+/**
+ * Multi-page PDF export with real text.
+ *
+ * Each page becomes a stack of slices in z-order:
+ * - plain text layers (no effect, not curved) are drawn as PDF text with
+ *   the font embedded (subset), at the exact baselines Konva uses — crisp,
+ *   searchable and copyable;
+ * - everything else (background, images, shapes, frames, styled or curved
+ *   text, effects) is rendered by Konva itself into image slices cropped
+ *   to their content, so it looks exactly like the editor.
+ * A text layer whose font file isn't available, or that uses characters
+ * the font lacks, falls back to an image slice.
+ */
+
+/** PDF points per design pixel (96 px per inch, like Canva/browsers). */
+const POINTS_PER_PX = 72 / 96;
+
+export interface PdfExportOptions {
+  /** Raster slice resolution relative to the design size. */
+  pixelRatio: number;
+  onProgress?: (page: number, total: number) => void;
+}
+
+type Slice = { kind: "raster"; nodes: Konva.Node[]; withBackground: boolean } | { kind: "text"; layer: TextLayer; node: Konva.Text };
+
+/**
+ * Waits for the next paint. Hidden tabs pause animation frames, so a timer
+ * stands in — an export keeps going if the tab is switched mid-way.
+ */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, 50);
+    requestAnimationFrame(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+function hexToRgb(hex: string) {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  const value = match?.[1] ? parseInt(match[1], 16) : 0;
+  return rgb(((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255);
+}
+
+/** Waits until every image on the open page has loaded and fonts are ready. */
+async function waitForPage(layers: Layer[]): Promise<void> {
+  await nextFrame();
+  await nextFrame();
+  await ensureFontsLoaded(layers.filter((layer): layer is TextLayer => layer.type === "text").map((layer) => layer.fontFamily));
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const pending = layers.some((layer) => {
+      if (!layer.visible || (layer.type !== "image" && !(layer.type === "frame" && layer.content))) {
+        return false;
+      }
+      const node = getLayerNode(layer.id);
+      const image = node instanceof Konva.Image ? node : node instanceof Konva.Group ? node.findOne<Konva.Image>("Image") : undefined;
+      const source = image?.image();
+      return !(source instanceof HTMLImageElement ? source.complete && source.naturalWidth > 0 : source);
+    });
+    if (!pending || Date.now() > deadline) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  await nextFrame();
+  getContentLayer()?.draw();
+}
+
+/** Font files for PDF embedding: Google Fonts via our server, else this machine's own fonts. */
+class FontSource {
+  private readonly cache = new Map<string, Promise<PDFFont | null>>();
+
+  constructor(private readonly pdf: PDFDocument) {}
+
+  get(layer: TextLayer): Promise<PDFFont | null> {
+    const bold = layer.fontStyle.includes("bold");
+    const italic = layer.fontStyle.includes("italic");
+    const key = `${layer.fontFamily}|${String(bold)}|${String(italic)}`;
+    let font = this.cache.get(key);
+    if (!font) {
+      font = this.load(layer.fontFamily, bold, italic).then(async (bytes) => {
+        if (!bytes) {
+          return null;
+        }
+        try {
+          return await this.pdf.embedFont(bytes, { subset: true });
+        } catch {
+          return null;
+        }
+      });
+      this.cache.set(key, font);
+    }
+    return font;
+  }
+
+  private async load(family: string, bold: boolean, italic: boolean): Promise<ArrayBuffer | null> {
+    if (isGoogleFont(family)) {
+      const res = await fetch(`/api/fonts/file?family=${encodeURIComponent(family)}&weight=${bold ? "700" : "400"}&italic=${italic ? "1" : "0"}`);
+      return res.ok ? res.arrayBuffer() : null;
+    }
+    const query = (window as { queryLocalFonts?: () => Promise<{ family: string; style: string; blob: () => Promise<Blob> }[]> }).queryLocalFonts;
+    if (!query) {
+      return null;
+    }
+    try {
+      const wanted = bold && italic ? "bold italic" : bold ? "bold" : italic ? "italic" : "regular";
+      const candidates = (await query()).filter((font) => font.family === family);
+      const exact = candidates.find((font) => font.style.toLowerCase() === wanted);
+      const match = exact ?? (wanted === "regular" ? candidates.find((font) => /^(normal|book|roman)$/i.test(font.style)) : undefined);
+      return match ? await (await match.blob()).arrayBuffer() : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** True when `font` has a glyph for every character of `text`. */
+function fontCovers(font: PDFFont, text: string): boolean {
+  const embedded = (font as unknown as { embedder?: { font?: { hasGlyphForCodePoint?: (cp: number) => boolean } } }).embedder?.font;
+  if (!embedded?.hasGlyphForCodePoint) {
+    return true;
+  }
+  for (const char of text) {
+    const cp = char.codePointAt(0);
+    if (cp !== undefined && cp > 32 && !embedded.hasGlyphForCodePoint(cp)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+interface FontkitGlyphRun {
+  glyphs: { advanceWidth: number }[];
+  positions: { xAdvance: number }[];
+}
+
+interface FontkitFont {
+  unitsPerEm: number;
+  layout: (text: string, features?: Record<string, boolean>) => FontkitGlyphRun;
+}
+
+/**
+ * A line as positioned runs of text. The browser kerns pairs like "AV" when
+ * letter spacing is 0 (Konva draws letter by letter otherwise, without
+ * kerning); PDF text has no kerning of its own, so the line is split
+ * wherever a pair is kerned and each run starts at its exact x.
+ */
+function layoutLine(font: PDFFont, text: string, fontSize: number, letterSpacing: number) {
+  const fontkitFont = (font as unknown as { embedder?: { font?: FontkitFont } }).embedder?.font;
+  const chars = [...text];
+  if (!fontkitFont || letterSpacing !== 0) {
+    const width = font.widthOfTextAtSize(text, fontSize) + letterSpacing * Math.max(0, chars.length - 1);
+    return { runs: [{ text, x: 0 }], width };
+  }
+  // Ligatures off so glyphs map one-to-one to characters.
+  const run = fontkitFont.layout(text, { liga: false, clig: false, kern: true });
+  if (run.glyphs.length !== chars.length) {
+    return { runs: [{ text, x: 0 }], width: font.widthOfTextAtSize(text, fontSize) };
+  }
+  const scale = fontSize / fontkitFont.unitsPerEm;
+  const runs: { text: string; x: number }[] = [];
+  let x = 0;
+  let current = { text: "", x: 0 };
+  chars.forEach((char, index) => {
+    current.text += char;
+    const plain = run.glyphs[index]?.advanceWidth ?? 0;
+    const actual = run.positions[index]?.xAdvance ?? plain;
+    x += actual * scale;
+    if (actual !== plain && index < chars.length - 1) {
+      runs.push(current);
+      current = { text: "", x };
+    }
+  });
+  runs.push(current);
+  return { runs: runs.filter((entry) => entry.text !== ""), width: x };
+}
+
+/** Text drawn as real PDF text, line by line, at Konva's own baselines. */
+function drawText(page: PDFPage, slice: Extract<Slice, { kind: "text" }>, font: PDFFont, designHeight: number) {
+  const { layer, node } = slice;
+  const fontSize = node.fontSize();
+  const lineHeightPx = node.lineHeight() * fontSize;
+  const padding = node.padding();
+  const totalWidth = node.width();
+  const letterSpacing = node.letterSpacing();
+  // Same baseline math as Konva.Text (non-legacy rendering).
+  const measured: unknown = node.measureSize("M");
+  const metrics = measured as { fontBoundingBoxAscent?: number; fontBoundingBoxDescent?: number; actualBoundingBoxAscent?: number; actualBoundingBoxDescent?: number };
+  const ascent = metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent ?? fontSize * 0.8;
+  const descent = metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent ?? fontSize * 0.2;
+  const firstBaseline = (ascent - descent) / 2 + lineHeightPx / 2;
+  const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = node.getAbsoluteTransform().getMatrix();
+  const k = POINTS_PER_PX;
+  const color = hexToRgb(layer.fill);
+  // The text node sits inside the layer's group, which carries layer opacity.
+  const opacity = node.opacity() * (node.getParent()?.opacity() ?? 1);
+
+  page.pushOperators(
+    pushGraphicsState(),
+    // Text-local (x right, y down) → PDF (y up), in points.
+    concatTransformationMatrix(k * a, -k * b, -k * c, k * d, k * e, k * (designHeight - f)),
+    setCharacterSpacing(letterSpacing),
+  );
+  node.textArr.forEach((line, index) => {
+    const text = line.text.replace(/\s+$/, "");
+    if (!text) {
+      return;
+    }
+    const { runs, width: pdfWidth } = layoutLine(font, text, fontSize, letterSpacing);
+    // Align by the embedded font's own width so centers/right edges stay put.
+    const lineLeft = padding;
+    const available = totalWidth - padding * 2;
+    const x = layer.align === "center"
+      ? lineLeft + (available - pdfWidth) / 2
+      : layer.align === "right"
+        ? lineLeft + available - pdfWidth
+        : lineLeft;
+    const baseline = padding + firstBaseline + index * lineHeightPx;
+    for (const run of runs) {
+      page.drawText(run.text, { x: x + run.x, y: -baseline, size: fontSize, font, color, opacity });
+    }
+  });
+  page.pushOperators(popGraphicsState());
+}
+
+/** Renders `nodes` (and nothing else) of the content layer into an image slice. */
+function rasterize(contentLayer: Konva.Layer, slice: Extract<Slice, { kind: "raster" }>, width: number, height: number, pixelRatio: number) {
+  const keep = new Set(slice.nodes);
+  const saved = contentLayer.getChildren().map((child) => [child, child.opacity()] as const);
+  // Hide by opacity, not visibility: overlays that read other nodes' state
+  // (e.g. the outlined-text-behind-subject pass) must keep seeing them.
+  for (const [child, opacity] of saved) {
+    child.opacity(keep.has(child) ? opacity : 0);
+  }
+  try {
+    let box = { x: 0, y: 0, width, height };
+    if (!slice.withBackground) {
+      const rects = slice.nodes.map((node) => node.getClientRect());
+      const x0 = Math.max(0, Math.floor(Math.min(...rects.map((r) => r.x))));
+      const y0 = Math.max(0, Math.floor(Math.min(...rects.map((r) => r.y))));
+      const x1 = Math.min(width, Math.ceil(Math.max(...rects.map((r) => r.x + r.width))));
+      const y1 = Math.min(height, Math.ceil(Math.max(...rects.map((r) => r.y + r.height))));
+      if (x1 <= x0 || y1 <= y0) {
+        return null;
+      }
+      box = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    }
+    // An opaque full page compresses far better as JPEG; slices keep alpha.
+    const opaque = slice.withBackground && slice.nodes.some((node) => node.name() === "canvas-background");
+    const dataUrl = contentLayer.toDataURL({ ...box, pixelRatio, mimeType: opaque ? "image/jpeg" : "image/png", quality: 0.92 });
+    return { box, dataUrl, opaque };
+  } finally {
+    for (const [child, opacity] of saved) {
+      child.opacity(opacity);
+    }
+  }
+}
+
+/** Builds the open page's slices in z-order. */
+async function sliceOpenPage(layers: Layer[], fonts: FontSource, contentLayer: Konva.Layer): Promise<{ slices: Slice[]; fontFor: Map<TextLayer, PDFFont> }> {
+  const fontFor = new Map<TextLayer, PDFFont>();
+  const vector = new Map<Konva.Node, { layer: TextLayer; node: Konva.Text }>();
+  for (const layer of layers) {
+    if (layer.type !== "text" || !layer.visible || (layer.curve ?? 0) !== 0 || (layer.effect && layer.effect.type !== "none")) {
+      continue;
+    }
+    const group = getLayerNode(layer.id);
+    const main = group instanceof Konva.Container ? group.findOne<Konva.Text>(`.${TEXT_MAIN_NAME}`) : undefined;
+    const font = main instanceof Konva.Text ? await fonts.get(layer) : null;
+    if (group && main instanceof Konva.Text && font && fontCovers(font, layer.text) && /^#?[0-9a-f]{6}$/i.test(layer.fill)) {
+      fontFor.set(layer, font);
+      vector.set(group, { layer, node: main });
+    }
+  }
+  // Content-layer children in z-order. Unregistered helpers (the background
+  // rect, per-layer overlays) travel with the node right before them.
+  const slices: Slice[] = [];
+  let raster: Extract<Slice, { kind: "raster" }> | null = null;
+  for (const child of contentLayer.getChildren()) {
+    const text = vector.get(child);
+    if (text) {
+      raster = null;
+      slices.push({ kind: "text", ...text });
+      continue;
+    }
+    if (!raster) {
+      raster = { kind: "raster", nodes: [], withBackground: slices.length === 0 };
+      slices.push(raster);
+    }
+    raster.nodes.push(child);
+  }
+  return { slices, fontFor };
+}
+
+export async function exportDesignPdf(options: PdfExportOptions): Promise<Uint8Array> {
+  const store = useEditorStore.getState();
+  const design = store.design;
+  if (!design) {
+    throw new Error("No design open");
+  }
+  store.commitTransient();
+  store.setEditingTextLayer(null);
+  store.setEditingFrame(null);
+  const originalPageId = store.activePageId;
+  const pageIds = design.pages.map((page) => page.id);
+
+  const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
+  pdf.setTitle(design.name);
+  pdf.setCreator("MyCanvas");
+  pdf.setProducer("MyCanvas (pdf-lib)");
+  const fonts = new FontSource(pdf);
+  const k = POINTS_PER_PX;
+
+  try {
+    for (const [index, pageId] of pageIds.entries()) {
+      options.onProgress?.(index + 1, pageIds.length);
+      useEditorStore.getState().setActivePage(pageId);
+      const live = useEditorStore.getState().design;
+      if (!live) {
+        throw new Error("Design closed during export");
+      }
+      await waitForPage(live.layers);
+      const contentLayer = getContentLayer();
+      if (!contentLayer) {
+        throw new Error("Canvas is not ready");
+      }
+      const page = pdf.addPage([design.width * k, design.height * k]);
+      const { slices, fontFor } = await sliceOpenPage(live.layers, fonts, contentLayer);
+      for (const slice of slices) {
+        if (slice.kind === "text") {
+          const font = fontFor.get(slice.layer);
+          if (font) {
+            drawText(page, slice, font, design.height);
+          }
+          continue;
+        }
+        const image = rasterize(contentLayer, slice, design.width, design.height, options.pixelRatio);
+        if (!image) {
+          continue;
+        }
+        const embedded = image.opaque ? await pdf.embedJpg(image.dataUrl) : await pdf.embedPng(image.dataUrl);
+        page.drawImage(embedded, {
+          x: image.box.x * k,
+          y: (design.height - image.box.y - image.box.height) * k,
+          width: image.box.width * k,
+          height: image.box.height * k,
+        });
+      }
+    }
+  } finally {
+    useEditorStore.getState().setActivePage(originalPageId);
+  }
+  return pdf.save();
+}

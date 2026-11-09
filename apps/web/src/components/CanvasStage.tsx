@@ -1,9 +1,9 @@
 import Konva from "konva";
 import { type DragEvent as ReactDragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Arc, Circle, Group, Image as KonvaImage, Layer, Line, Path, Rect, Shape, Stage, Transformer } from "react-konva";
-import { type Design, type FrameContent, type Layer as EditorLayer } from "@mycanvas/shared";
+import { type FrameContent, type Layer as EditorLayer } from "@mycanvas/shared";
 import { api } from "../api";
-import { useEditorStore, primarySelectedId } from "../store/editorStore";
+import { type EditorDesign, useEditorStore, primarySelectedId } from "../store/editorStore";
 import { getCachedImageSize, useImage } from "../hooks/useImage";
 import { useTheme } from "../utils/theme";
 import { setCanvasBridge } from "../utils/canvas-bridge";
@@ -25,7 +25,7 @@ import { Rulers } from "./Rulers";
 import { TextEditorOverlay } from "./TextEditorOverlay";
 
 interface CanvasStageProps {
-  design: Design;
+  design: EditorDesign;
   scale: number;
   onFitScale: (fit: number) => void;
 }
@@ -1029,6 +1029,7 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
         }
       },
       getLayerNode: (id) => nodesRef.current.get(id) ?? null,
+      getContentLayer: () => contentLayerRef.current,
     });
     return () => {
       setCanvasBridge(null);
