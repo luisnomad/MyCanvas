@@ -1,4 +1,5 @@
 import {
+  type BlockDesign,
   type Design,
   type DesignPage,
   type DocumentSource,
@@ -34,6 +35,8 @@ export type EditorDesign = Design & PageContent;
 interface Snapshot {
   pages: DesignPage[];
   activePageId: string;
+  /** Designs made of blocks: which block each page shows (undone with the pages). */
+  blocks?: BlockDesign;
 }
 
 /**
@@ -187,6 +190,8 @@ export interface EditorStore {
   updateLayersOnAnyPage: (entries: { id: string; patch: LayerPatch }[]) => void;
   /** Replaces every page (one undo step), e.g. after re-flowing content. */
   replacePages: (pages: DesignPage[], source?: DocumentSource) => void;
+  /** Designs made of blocks: redrawn pages (matched by id) and the new block record, one undo step. */
+  redrawBlocks: (pages: DesignPage[], blocks: BlockDesign) => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -276,13 +281,13 @@ export function clonePageContent(page: PageContent): PageContent {
 export const useEditorStore = create<EditorStore>()((set, get) => {
   const snapshotOf = (design: EditorDesign): Snapshot => {
     const activePageId = get().activePageId;
-    return { pages: structuredClone(syncedPages(design, activePageId)), activePageId };
+    return { pages: structuredClone(syncedPages(design, activePageId)), activePageId, blocks: design.blocks ? structuredClone(design.blocks) : undefined };
   };
 
   /** Puts a history entry back: its pages, with its page open. */
   const restore = (design: EditorDesign, snapshot: Snapshot) => {
     set({
-      design: withActivePage({ ...design, pages: snapshot.pages }, snapshot.activePageId),
+      design: withActivePage({ ...design, pages: snapshot.pages, blocks: "blocks" in snapshot ? snapshot.blocks : design.blocks }, snapshot.activePageId),
       activePageId: snapshot.activePageId,
       selectedLayerIds: [],
       editingGroupId: null,
@@ -1107,6 +1112,21 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       }
       set({ design: { ...design, formatAi } });
       markDirty();
+    },
+
+    redrawBlocks: (pages, blocks) => {
+      const redrawn = new Map(pages.map((page) => [page.id, page]));
+      changePages((current, activePageId) => ({
+        pages: current.map((page) => {
+          const next = redrawn.get(page.id);
+          return next ? { ...next, thumbnail: page.thumbnail } : page;
+        }),
+        activePageId,
+      }));
+      const design = get().design;
+      if (design) {
+        set({ design: { ...design, blocks } });
+      }
     },
 
     replacePages: (pages, source) => {

@@ -4,6 +4,7 @@ import { AdjustSection } from "./inspector/AdjustSection";
 import { AiToolsSection } from "./inspector/AiToolsSection";
 import { ArrangeSection } from "./inspector/ArrangeSection";
 import { BehindTextSection } from "./inspector/BehindTextSection";
+import { BlockSection } from "./inspector/BlockSection";
 import { ShadowPanel, StrokePanel } from "./inspector/EffectPanels";
 import { FormatRoleSection } from "./inspector/FormatRoleSection";
 import { FrameSection } from "./inspector/FrameSection";
@@ -29,6 +30,7 @@ export function Inspector() {
     return (
       <div className="panel-section inspector">
         <h3>Inspector</h3>
+        <BlockSection />
         <p className="muted">Select a layer to edit its properties.</p>
       </div>
     );

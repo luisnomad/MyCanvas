@@ -15,6 +15,7 @@ import {
   type StoredDesign,
   type TemplateSummary,
   ASPECT_RATIOS,
+  cleanBlockDesign,
   isGeneratedAssetName,
   GOOGLE_FONTS,
   normalizeDesign,
@@ -205,6 +206,7 @@ app.post("/api/designs", async (c) => {
     /** Ready-made pages, e.g. a document generated from a format. */
     pages?: DesignPage[];
     source?: DocumentSource;
+    blocks?: unknown;
   }>();
   const folderId = await existingFolderId(ws, body.folderId);
   if (body.templateId !== undefined) {
@@ -236,6 +238,7 @@ app.post("/api/designs", async (c) => {
     return c.json({ error: "Invalid pages" }, 400);
   }
   const source = cleanSource(body.source);
+  const blocks = cleanBlockDesign(body.blocks);
   const now = new Date().toISOString();
   const trimmedName = body.name?.trim();
   const design: Design = {
@@ -246,6 +249,7 @@ app.post("/api/designs", async (c) => {
     pages: pages ?? [{ id: newId(), background: body.background ?? "#ffffff", layers: [] }],
     folderId,
     ...(source ? { source } : {}),
+    ...(blocks ? { blocks } : {}),
     createdAt: now,
     updatedAt: now,
   };
@@ -305,6 +309,14 @@ app.put("/api/designs/:id", async (c) => {
       design.source = source;
     } else {
       delete design.source;
+    }
+  }
+  if ("blocks" in body) {
+    const blocks = cleanBlockDesign(body.blocks);
+    if (blocks) {
+      design.blocks = blocks;
+    } else {
+      delete design.blocks;
     }
   }
   await writeJsonFile(designFile(ws, design.id), design);

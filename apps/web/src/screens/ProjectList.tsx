@@ -6,6 +6,7 @@ import { FolderBar } from "../components/folders/FolderBar";
 import { MoveToFolder } from "../components/folders/MoveToFolder";
 import { TemplateGallery } from "../components/TemplateGallery";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { BlocksFromContentDialog } from "../components/blocks/BlocksFromContentDialog";
 import { ContentDialog } from "../components/formats/ContentDialog";
 import { FormatFromExampleDialog } from "../components/formats/FormatFromExampleDialog";
 import { UploadsManager } from "../components/uploads/UploadsManager";
@@ -48,6 +49,7 @@ export function ProjectList({ view }: { view: FolderView }) {
   const [showUploads, setShowUploads] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showNewDocument, setShowNewDocument] = useState(false);
+  const [showFromContent, setShowFromContent] = useState(false);
   const [showFromExample, setShowFromExample] = useState(false);
   const [newName, setNewName] = useState("");
   const [presetId, setPresetId] = useState(ASPECT_RATIOS[0]?.id ?? "16:9");
@@ -263,6 +265,16 @@ export function ProjectList({ view }: { view: FolderView }) {
             }}
           >
             New design
+          </button>
+          <button
+            type="button"
+            className="secondary hero-cta"
+            title="Paste or import content: each part becomes a page built from a visual block, in a theme you pick"
+            onClick={() => {
+              setShowFromContent(true);
+            }}
+          >
+            From content…
           </button>
           {formats.length > 0 && (
             <button
@@ -562,6 +574,16 @@ export function ProjectList({ view }: { view: FolderView }) {
           folderId={targetFolderId}
           onClose={() => {
             setShowFromExample(false);
+            refresh();
+          }}
+        />
+      )}
+      {showFromContent && (
+        <BlocksFromContentDialog
+          formats={formats}
+          folderId={targetFolderId}
+          onClose={() => {
+            setShowFromContent(false);
             refresh();
           }}
         />

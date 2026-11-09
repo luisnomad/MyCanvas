@@ -1,3 +1,5 @@
+import { type BlockDesign } from "./blocks";
+
 export interface ShadowEffect {
   enabled: boolean;
   color: string;
@@ -31,6 +33,9 @@ interface LayerBase {
   locked?: boolean;
   /** Only meaningful inside a document format (see FormatRole). */
   formatRole?: FormatRole;
+  /** Designs made of visual blocks: the slot this layer shows (e.g. "title",
+   *  "items.2.text"), so hand edits survive switching the page's block. */
+  blockSlot?: string;
 }
 
 /** Content block kinds a document format can style. */
@@ -274,6 +279,8 @@ export interface Design {
   source?: DocumentSource;
   /** Formats only: instructions for the AI tools. */
   formatAi?: FormatAiInstructions;
+  /** Designs made of visual blocks: the theme and each page's block. */
+  blocks?: BlockDesign;
   createdAt: string;
   updatedAt: string;
 }

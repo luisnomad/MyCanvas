@@ -4,6 +4,7 @@ import {
   type AiSettings,
   type AiSettingsInput,
   type AssetInfo,
+  type BlockDesign,
   type Design,
   type DesignPage,
   type DesignSummary,
@@ -66,6 +67,8 @@ export interface CreateDesignInput {
   /** Ready-made pages (a document generated from a format). */
   pages?: DesignPage[];
   source?: DocumentSource;
+  /** Designs made of visual blocks. */
+  blocks?: BlockDesign;
 }
 
 /** An editor save; `kind: null` turns a format back into a plain design. */
