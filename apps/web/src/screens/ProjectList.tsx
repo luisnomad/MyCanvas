@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { ASPECT_RATIOS, type DesignSummary, PLATFORM_SIZES, type TemplateSummary } from "@mycanvas/shared";
+import { ASPECT_RATIOS, type DesignSummary, type Folder, PLATFORM_SIZES, type TemplateSummary } from "@mycanvas/shared";
 import { api } from "../api";
 import { Brand } from "../components/Brand";
+import { FolderBar } from "../components/folders/FolderBar";
+import { MoveToFolder } from "../components/folders/MoveToFolder";
 import { TemplateGallery } from "../components/TemplateGallery";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { UploadsManager } from "../components/uploads/UploadsManager";
 import { UserBadge } from "../components/UserBadge";
+import { ALL_DESIGNS, DESIGN_DRAG_MIME, type FolderView, folderViewHash, inView } from "../utils/folders";
 import { relativeEditedTime } from "../utils/relative-time";
 
 const MAX_CANVAS = 8192;
@@ -36,8 +39,9 @@ function PresetGlyph({ width, height }: { width: number; height: number }) {
   );
 }
 
-export function ProjectList() {
+export function ProjectList({ view }: { view: FolderView }) {
   const [designs, setDesigns] = useState<DesignSummary[] | null>(null);
+  const [folders, setFolders] = useState<Folder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showUploads, setShowUploads] = useState(false);
   const [showNew, setShowNew] = useState(false);
@@ -59,6 +63,15 @@ export function ProjectList() {
       });
   }, []);
 
+  const refreshFolders = useCallback(() => {
+    void api
+      .listFolders()
+      .then(setFolders)
+      .catch(() => {
+        setFolders([]);
+      });
+  }, []);
+
   const refreshTemplates = useCallback(() => {
     void api
       .listTemplates()
@@ -70,8 +83,19 @@ export function ProjectList() {
 
   useEffect(() => {
     refresh();
+    refreshFolders();
     refreshTemplates();
-  }, [refresh, refreshTemplates]);
+  }, [refresh, refreshFolders, refreshTemplates]);
+
+  const currentFolder = view.kind === "folder" ? folders?.find((folder) => folder.id === view.id) : undefined;
+  // A link to a folder that no longer exists falls back to all designs.
+  useEffect(() => {
+    if (view.kind === "folder" && folders !== null && !currentFolder) {
+      window.location.hash = folderViewHash(ALL_DESIGNS);
+    }
+  }, [view, folders, currentFolder]);
+  /** New designs land in the folder being viewed. */
+  const targetFolderId = currentFolder?.id;
 
   const size = resolveSize(presetId, customWidth, customHeight);
 
@@ -85,6 +109,7 @@ export function ProjectList() {
         name: newName.trim() || "Untitled design",
         width: size.width,
         height: size.height,
+        folderId: targetFolderId,
       });
       window.location.hash = `#/edit/${design.id}`;
     } catch (err) {
@@ -99,7 +124,7 @@ export function ProjectList() {
     }
     setTemplateBusyId(template.id);
     void api
-      .createDesign({ templateId: template.id })
+      .createDesign({ templateId: template.id, folderId: targetFolderId })
       .then((design) => {
         window.location.hash = `#/edit/${design.id}`;
       })
@@ -122,7 +147,65 @@ export function ProjectList() {
   };
 
   const query = search.trim().toLowerCase();
-  const visibleDesigns = designs?.filter((design) => design.name.toLowerCase().includes(query)) ?? [];
+  const designsInView = designs?.filter((design) => inView(view, design.folderId)) ?? [];
+  const visibleDesigns = designsInView.filter((design) => design.name.toLowerCase().includes(query));
+  const counts = new Map<string, number>([["all", designs?.length ?? 0], ["unfiled", 0]]);
+  for (const design of designs ?? []) {
+    const key = design.folderId ?? "unfiled";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const viewTitle = view.kind === "unfiled"
+    ? "Unfiled designs"
+    : currentFolder
+      ? currentFolder.name
+      : "Continue designing";
+
+  const move = (designId: string, folderId: string | null) => {
+    // Optimistic: the card leaves this view right away.
+    setDesigns((current) => current?.map((design) =>
+      design.id === designId ? { ...design, folderId: folderId ?? undefined } : design) ?? null);
+    void api
+      .moveDesign(designId, folderId)
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to move design");
+      })
+      .finally(refresh);
+  };
+
+  const createFolder = async (name: string) => {
+    const folder = await api.createFolder(name);
+    // Known before navigating, or the missing-folder fallback bounces back.
+    setFolders((current) => [...(current ?? []), folder]);
+    window.location.hash = folderViewHash({ kind: "folder", id: folder.id });
+    refreshFolders();
+  };
+
+  const renameFolder = async (folder: Folder, name: string) => {
+    await api.renameFolder(folder.id, name);
+    refreshFolders();
+  };
+
+  const deleteFolder = (folder: Folder) => {
+    const count = counts.get(folder.id) ?? 0;
+    const detail = count === 0
+      ? "It's empty."
+      : `Its ${String(count)} ${count === 1 ? "design stays" : "designs stay"} and ${count === 1 ? "becomes" : "become"} unfiled.`;
+    if (!window.confirm(`Delete the folder "${folder.name}"? ${detail}`)) {
+      return;
+    }
+    void api
+      .deleteFolder(folder.id)
+      .then(() => {
+        if (view.kind === "folder" && view.id === folder.id) {
+          window.location.hash = folderViewHash(ALL_DESIGNS);
+        }
+        refreshFolders();
+        refresh();
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to delete folder");
+      });
+  };
 
   const duplicate = (id: string) => {
     void api
@@ -191,10 +274,21 @@ export function ProjectList() {
           </>
         )}
         {designs === null && !error && <p className="muted">Loading…</p>}
+        {designs !== null && folders !== null && (
+          <FolderBar
+            folders={folders}
+            counts={counts}
+            view={view}
+            onCreate={createFolder}
+            onRename={renameFolder}
+            onDelete={deleteFolder}
+            onDropDesign={move}
+          />
+        )}
         {designs !== null && (
           <div className="section-header">
-            <h2 className="section-title">Continue designing</h2>
-            {designs.length > 0 && (
+            <h2 className="section-title">{viewTitle}</h2>
+            {designsInView.length > 0 && (
               <input
                 type="search"
                 className="design-search"
@@ -211,7 +305,14 @@ export function ProjectList() {
         {designs !== null && designs.length === 0 && (
           <p className="muted">No designs yet. Create your first one, or start from a template.</p>
         )}
-        {designs !== null && designs.length > 0 && visibleDesigns.length === 0 && (
+        {designs !== null && designs.length > 0 && designsInView.length === 0 && (
+          <p className="muted">
+            {view.kind === "folder"
+              ? "This folder is empty. Create a design here, or drag designs onto the folder."
+              : "Nothing here."}
+          </p>
+        )}
+        {designsInView.length > 0 && visibleDesigns.length === 0 && (
           <p className="muted">{`No designs match "${search.trim()}".`}</p>
         )}
 
@@ -222,6 +323,11 @@ export function ProjectList() {
               className="design-card"
               role="link"
               tabIndex={0}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(DESIGN_DRAG_MIME, design.id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
               onClick={() => {
                 window.location.hash = `#/edit/${design.id}`;
               }}
@@ -269,6 +375,13 @@ export function ProjectList() {
                 >
                   Duplicate
                 </button>
+                {folders && (
+                  <MoveToFolder
+                    folders={folders}
+                    currentFolderId={design.folderId}
+                    onMove={(folderId) => { move(design.id, folderId); }}
+                  />
+                )}
                 <button
                   type="button"
                   className="secondary danger"

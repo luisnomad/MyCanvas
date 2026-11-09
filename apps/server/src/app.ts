@@ -9,6 +9,7 @@ import {
   type AssetInfo,
   type Design,
   type DesignSummary,
+  type Folder,
   type TemplateSummary,
   ASPECT_RATIOS,
   GENERATED_ASSET_NAMES,
@@ -53,9 +54,27 @@ function toSummary(design: Design): DesignSummary {
     width: design.width,
     height: design.height,
     thumbnail: design.thumbnail,
+    folderId: design.folderId,
     createdAt: design.createdAt,
     updatedAt: design.updatedAt,
   };
+}
+
+async function readFolders(ws: Workspace): Promise<Folder[]> {
+  return (await readJsonFile<Folder[]>(ws.foldersFile)) ?? [];
+}
+
+/** The folder id to file a design under, or undefined when it doesn't exist. */
+async function existingFolderId(ws: Workspace, folderId: unknown): Promise<string | undefined> {
+  if (typeof folderId !== "string") {
+    return undefined;
+  }
+  return (await readFolders(ws)).some((folder) => folder.id === folderId) ? folderId : undefined;
+}
+
+function cleanFolderName(name: unknown): string | null {
+  const trimmed = typeof name === "string" ? name.trim() : "";
+  return trimmed.length >= 1 && trimmed.length <= 80 ? trimmed : null;
 }
 
 async function readDesign(ws: Workspace, id: string): Promise<Design | null> {
@@ -144,7 +163,9 @@ app.post("/api/designs", async (c) => {
     height?: number;
     background?: string;
     templateId?: string;
+    folderId?: string;
   }>();
+  const folderId = await existingFolderId(ws, body.folderId);
   if (body.templateId !== undefined) {
     const source = await readTemplate(ws, body.templateId);
     if (!source) {
@@ -156,6 +177,7 @@ app.post("/api/designs", async (c) => {
       ...structuredClone(source),
       id: newId(),
       name: trimmed === undefined || trimmed === "" ? source.name : trimmed,
+      folderId,
       createdAt: now,
       updatedAt: now,
     };
@@ -177,6 +199,7 @@ app.post("/api/designs", async (c) => {
     height,
     background: body.background ?? "#ffffff",
     layers: [],
+    folderId,
     createdAt: now,
     updatedAt: now,
   };
@@ -203,6 +226,9 @@ app.put("/api/designs/:id", async (c) => {
     ...existing,
     ...body,
     id: existing.id,
+    // Editor saves never move a design (it may have been moved elsewhere
+    // while open); only POST /api/designs/:id/move does.
+    folderId: existing.folderId,
     createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
   };
@@ -239,6 +265,87 @@ app.post("/api/designs/:id/duplicate", async (c) => {
   };
   await writeJsonFile(designFile(ws, copy.id), copy);
   return c.json(copy, 201);
+});
+
+app.post("/api/designs/:id/move", async (c) => {
+  const ws = c.get("ws");
+  const design = await readDesign(ws, c.req.param("id"));
+  if (!design) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  const body = await c.req.json<{ folderId?: string | null }>();
+  const folderId = body.folderId === null || body.folderId === undefined
+    ? undefined
+    : await existingFolderId(ws, body.folderId);
+  if (body.folderId && !folderId) {
+    return c.json({ error: "Folder not found" }, 404);
+  }
+  const moved: Design = { ...design, folderId };
+  await writeJsonFile(designFile(ws, design.id), moved);
+  return c.json(toSummary(moved));
+});
+
+app.get("/api/folders", async (c) => {
+  const folders = await readFolders(c.get("ws"));
+  return c.json(folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })));
+});
+
+app.post("/api/folders", async (c) => {
+  const ws = c.get("ws");
+  const name = cleanFolderName((await c.req.json<{ name?: unknown }>()).name);
+  if (!name) {
+    return c.json({ error: "Folder name must be 1–80 characters" }, 400);
+  }
+  const folders = await readFolders(ws);
+  if (folders.some((folder) => folder.name.toLowerCase() === name.toLowerCase())) {
+    return c.json({ error: `A folder named "${name}" already exists` }, 409);
+  }
+  const folder: Folder = { id: newId(), name, createdAt: new Date().toISOString() };
+  await writeJsonFile(ws.foldersFile, [...folders, folder]);
+  return c.json(folder, 201);
+});
+
+app.patch("/api/folders/:id", async (c) => {
+  const ws = c.get("ws");
+  const id = c.req.param("id");
+  const name = cleanFolderName((await c.req.json<{ name?: unknown }>()).name);
+  if (!name) {
+    return c.json({ error: "Folder name must be 1–80 characters" }, 400);
+  }
+  const folders = await readFolders(ws);
+  const folder = folders.find((entry) => entry.id === id);
+  if (!folder) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  if (folders.some((entry) => entry.id !== id && entry.name.toLowerCase() === name.toLowerCase())) {
+    return c.json({ error: `A folder named "${name}" already exists` }, 409);
+  }
+  folder.name = name;
+  await writeJsonFile(ws.foldersFile, folders);
+  return c.json(folder);
+});
+
+/** Deletes a folder; its designs are kept and become unfiled. */
+app.delete("/api/folders/:id", async (c) => {
+  const ws = c.get("ws");
+  const id = c.req.param("id");
+  const folders = await readFolders(ws);
+  if (!folders.some((folder) => folder.id === id)) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  let unfiled = 0;
+  for (const file of await readdir(ws.designsDir)) {
+    if (!file.endsWith(".json")) {
+      continue;
+    }
+    const design = await readJsonFile<Design>(path.join(ws.designsDir, file));
+    if (design?.folderId === id) {
+      await writeJsonFile(path.join(ws.designsDir, file), { ...design, folderId: undefined });
+      unfiled += 1;
+    }
+  }
+  await writeJsonFile(ws.foldersFile, folders.filter((folder) => folder.id !== id));
+  return c.json({ ok: true, unfiled });
 });
 
 app.get("/api/templates", async (c) => {
@@ -279,6 +386,7 @@ app.post("/api/templates", async (c) => {
   const saved: Design = {
     ...source,
     id: newId(),
+    folderId: undefined,
     thumbnail,
     name: trimmed === undefined || trimmed === "" ? source.name : trimmed,
     createdAt: now,

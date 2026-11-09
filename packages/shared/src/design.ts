@@ -218,13 +218,24 @@ export interface Design {
   layers: Layer[];
   /** Small data-URL preview rendered by the editor on save. */
   thumbnail?: string;
+  /** Project folder (e.g. a customer); absent = unfiled. Changed only through
+   *  the move endpoint, never by editor saves. */
+  folderId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A project folder in a person's workspace, e.g. one per customer. */
+export interface Folder {
+  id: string;
+  name: string;
+  createdAt: string;
 }
 
 export interface DesignSummary {
   id: string;
   name: string;
+  folderId?: string;
   width: number;
   height: number;
   thumbnail?: string;

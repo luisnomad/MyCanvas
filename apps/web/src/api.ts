@@ -1,4 +1,4 @@
-import { type AssetInfo, type Design, type DesignSummary, type TemplateSummary } from "@mycanvas/shared";
+import { type AssetInfo, type Design, type DesignSummary, type Folder, type TemplateSummary } from "@mycanvas/shared";
 
 export class ApiError extends Error {
   status: number;
@@ -49,6 +49,8 @@ export interface CreateDesignInput {
   background?: string;
   /** Start from this template (built-in or saved); size/background come from it. */
   templateId?: string;
+  /** File the new design in this folder. */
+  folderId?: string;
 }
 
 export interface Me {
@@ -69,6 +71,16 @@ export const api = {
     request<{ ok: boolean }>(`/api/designs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   duplicateDesign: (id: string) =>
     request<Design>(`/api/designs/${encodeURIComponent(id)}/duplicate`, { method: "POST" }),
+  /** null unfiles the design. */
+  moveDesign: (id: string, folderId: string | null) =>
+    request<DesignSummary>(`/api/designs/${encodeURIComponent(id)}/move`, jsonInit("POST", { folderId })),
+  listFolders: () => request<Folder[]>("/api/folders"),
+  createFolder: (name: string) => request<Folder>("/api/folders", jsonInit("POST", { name })),
+  renameFolder: (id: string, name: string) =>
+    request<Folder>(`/api/folders/${encodeURIComponent(id)}`, jsonInit("PATCH", { name })),
+  /** Its designs are kept and become unfiled. */
+  deleteFolder: (id: string) =>
+    request<{ ok: boolean; unfiled: number }>(`/api/folders/${encodeURIComponent(id)}`, { method: "DELETE" }),
   listTemplates: () => request<TemplateSummary[]>("/api/templates"),
   saveTemplate: (designId: string, name?: string, thumbnail?: string) =>
     request<TemplateSummary>("/api/templates", jsonInit("POST", { designId, name, thumbnail })),

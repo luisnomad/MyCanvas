@@ -160,6 +160,49 @@ describe("workspace isolation", () => {
   });
 });
 
+describe("project folders", () => {
+  const json = (email: string, method: string, body: unknown): RequestInit =>
+    as(email, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  it("creates private folders, files designs and keeps them filed across editor saves", async () => {
+    const folderRes = await app.request("/api/folders", json(ALICE, "POST", { name: "Acme Corp" }));
+    expect(folderRes.status).toBe(201);
+    const folder = (await folderRes.json()) as { id: string; name: string };
+    expect((await app.request("/api/folders", json(ALICE, "POST", { name: "acme corp" }))).status).toBe(409);
+    expect((await app.request("/api/folders", json(ALICE, "POST", { name: "  " }))).status).toBe(400);
+
+    // Folders are per person.
+    expect((await (await app.request("/api/folders", as(BOB))).json()) as unknown[]).toEqual([]);
+    expect((await app.request(`/api/folders/${folder.id}`, json(BOB, "PATCH", { name: "Mine" }))).status).toBe(404);
+
+    // Created straight into the folder; Bob can't file into Alice's folder.
+    const inFolder = (await (await app.request("/api/designs", json(ALICE, "POST", { name: "Acme banner", folderId: folder.id }))).json()) as { id: string; folderId?: string };
+    expect(inFolder.folderId).toBe(folder.id);
+    const bobDesign = (await (await app.request("/api/designs", json(BOB, "POST", { name: "Bob's", folderId: folder.id }))).json()) as { folderId?: string };
+    expect(bobDesign.folderId).toBeUndefined();
+
+    // An editor save carrying a stale folder can't undo a move.
+    const loose = (await (await app.request("/api/designs", json(ALICE, "POST", { name: "Loose" }))).json()) as { id: string };
+    const moved = await app.request(`/api/designs/${loose.id}/move`, json(ALICE, "POST", { folderId: folder.id }));
+    expect(((await moved.json()) as { folderId?: string }).folderId).toBe(folder.id);
+    await app.request(`/api/designs/${loose.id}`, json(ALICE, "PUT", { name: "Loose (edited)", folderId: undefined }));
+    const after = (await (await app.request(`/api/designs/${loose.id}`, as(ALICE))).json()) as { name: string; folderId?: string };
+    expect(after).toMatchObject({ name: "Loose (edited)", folderId: folder.id });
+
+    // Moving to a folder that isn't yours fails; moving to null unfiles.
+    expect((await app.request(`/api/designs/${loose.id}/move`, json(BOB, "POST", { folderId: null }))).status).toBe(404);
+    expect((await app.request(`/api/designs/${loose.id}/move`, json(ALICE, "POST", { folderId: "nope" }))).status).toBe(404);
+
+    // Rename, then delete: designs survive, unfiled.
+    expect((await app.request(`/api/folders/${folder.id}`, json(ALICE, "PATCH", { name: "Acme Inc" }))).status).toBe(200);
+    const deleted = (await (await app.request(`/api/folders/${folder.id}`, as(ALICE, { method: "DELETE" }))).json()) as { unfiled: number };
+    expect(deleted.unfiled).toBe(2);
+    const list = (await (await app.request("/api/designs", as(ALICE))).json()) as { id: string; folderId?: string }[];
+    expect(list.find((design) => design.id === inFolder.id)?.folderId).toBeUndefined();
+    expect(list.find((design) => design.id === loose.id)?.folderId).toBeUndefined();
+  });
+});
+
 describe("legacy data migration", () => {
   it("moves pre-workspace data into the owner's workspace once", async () => {
     const legacyDir = await mkdtemp(path.join(tmpdir(), "mycanvas-legacy-"));

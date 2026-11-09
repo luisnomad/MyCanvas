@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Editor } from "./screens/Editor";
 import { ProjectList } from "./screens/ProjectList";
+import { ALL_DESIGNS, folderViewFromHash } from "./utils/folders";
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(() => window.location.hash);
@@ -26,5 +27,5 @@ export default function App() {
   if (editId) {
     return <Editor key={editId} designId={editId} />;
   }
-  return <ProjectList />;
+  return <ProjectList view={folderViewFromHash(hash) ?? ALL_DESIGNS} />;
 }

@@ -101,6 +101,11 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 **Projects & export**
 
 - Project list with thumbnails, search, duplicate and delete.
+- Project folders (e.g. one per customer): create, rename and delete folders,
+  move designs with the Move menu or by dragging a card onto a folder, and
+  start new designs straight inside a folder. Deleting a folder keeps its
+  designs (they become unfiled); the editor shows a Folder › Design
+  breadcrumb.
 - New designs from aspect-ratio presets, platform sizes (YouTube, Instagram,
   X, LinkedIn, A4) or any custom size up to 8192 px.
 - Templates: four built-in starters, and "Save as template" for your own.

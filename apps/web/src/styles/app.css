@@ -865,3 +865,223 @@ input.color-hex:focus {
   display: inline-block;
   margin-top: 4px;
 }
+
+/* Project folders */
+
+.folder-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 18px;
+}
+
+.folder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  text-decoration: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.folder-chip:hover {
+  border-color: var(--accent);
+}
+
+.folder-chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.folder-chip.drop-target {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.folder-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--surface-inner);
+}
+
+.folder-chip.active .folder-count,
+.folder-chip.drop-target .folder-count {
+  color: inherit;
+  background: transparent;
+}
+
+.folder-new {
+  border-style: dashed;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.folder-chip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.folder-chip-wrap .folder-chip {
+  padding-right: 30px;
+}
+
+.folder-chip-more {
+  position: absolute;
+  right: 5px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.folder-chip-wrap:hover .folder-chip-more,
+.folder-chip-more:focus-visible,
+.folder-chip-more[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.folder-chip-menu,
+.move-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 170px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.folder-chip-menu {
+  right: 0;
+}
+
+.folder-chip-menu button,
+.move-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+.folder-chip-menu button:hover,
+.move-menu button:hover:not(:disabled) {
+  background: var(--surface-inner);
+}
+
+.move-menu button:disabled {
+  opacity: 1;
+  color: var(--accent);
+  cursor: default;
+}
+
+.move-check {
+  width: 12px;
+}
+
+.move-empty {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.folder-name-input {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.folder-name-input input {
+  width: 200px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.folder-error {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 8px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.move-to-folder {
+  position: relative;
+}
+
+.move-to-folder .move-menu {
+  left: 0;
+}
+
+/* Keep a card's Move menu visible instead of clipped by the card. */
+.design-card:has(.move-menu) {
+  position: relative;
+  z-index: 5;
+  overflow: visible;
+}
+
+.design-card:has(.move-menu) .design-actions {
+  opacity: 1;
+}
+
+.design-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* Editor breadcrumb: Folder › Design */
+
+.editor-folder-link {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.editor-folder-link:hover {
+  color: var(--accent);
+}
+
+.editor-folder-sep {
+  margin: 0 -2px 0 2px;
+  color: var(--text-secondary);
+}

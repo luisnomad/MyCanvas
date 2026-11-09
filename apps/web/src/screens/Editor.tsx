@@ -14,6 +14,8 @@ import { UserBadge } from "../components/UserBadge";
 import { ViewMenu } from "../components/ViewMenu";
 import { useEditorStore } from "../store/editorStore";
 import { useViewSettings } from "../store/viewSettings";
+import { api } from "../api";
+import { folderViewHash } from "../utils/folders";
 import { makeDesignThumbnail } from "../utils/canvas-bridge";
 
 export function Editor({ designId }: { designId: string }) {
@@ -27,6 +29,28 @@ export function Editor({ designId }: { designId: string }) {
   const [zoom, setZoom] = useState<number | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const designFolderId = useEditorStore((state) => state.design?.folderId);
+  const [folderName, setFolderName] = useState<string | null>(null);
+
+  // Breadcrumb: the design's project folder, linking back to it.
+  useEffect(() => {
+    if (!designFolderId) {
+      setFolderName(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .listFolders()
+      .then((folders) => {
+        if (!cancelled) {
+          setFolderName(folders.find((folder) => folder.id === designFolderId)?.name ?? null);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [designFolderId]);
   const [textPropertiesRequest, setTextPropertiesRequest] = useState(0);
 
   const loadDesign = useEditorStore((state) => state.loadDesign);
@@ -253,6 +277,18 @@ export function Editor({ designId }: { designId: string }) {
       <header className="editor-top">
         <Brand />
         <span className="top-bar-divider" aria-hidden="true" />
+        {folderName && design.folderId && (
+          <>
+            <a
+              className="editor-folder-link"
+              href={folderViewHash({ kind: "folder", id: design.folderId })}
+              title={`Back to ${folderName}`}
+            >
+              {folderName}
+            </a>
+            <span className="editor-folder-sep" aria-hidden="true">›</span>
+          </>
+        )}
         <input
           className="design-name"
           value={design.name}

@@ -30,6 +30,7 @@ export interface Workspace {
   templatesDir: string;
   assetsManifestFile: string;
   settingsFile: string;
+  foldersFile: string;
 }
 
 /** Folder-safe, readable key for an email ("Luis.SG@gmail.com" → "luis-sg-gmail-com"). */
@@ -49,6 +50,7 @@ function workspacePaths(email: string): Workspace {
     templatesDir: path.join(root, "templates"),
     assetsManifestFile: path.join(root, "assets.json"),
     settingsFile: path.join(root, "settings.json"),
+    foldersFile: path.join(root, "folders.json"),
   };
 }
 

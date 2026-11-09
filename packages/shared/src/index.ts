@@ -6,6 +6,7 @@ export type {
   BehindText,
   Design,
   DesignSummary,
+  Folder,
   FrameContent,
   FrameLayer,
   FrameShape,
