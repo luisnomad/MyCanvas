@@ -588,3 +588,18 @@
 .block-choices .segmented button {
   flex: 1;
 }
+.block-picture {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.block-picture textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+}
+
+.block-picture button {
+  align-self: flex-start;
+}

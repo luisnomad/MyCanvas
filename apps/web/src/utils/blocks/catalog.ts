@@ -6,6 +6,9 @@ import { type BlockItem, type BlockSlots, type BlockVariant, type VisualBlockTyp
  * over, so they guide the AI rather than cut anyone's words.
  */
 
+/** How generated pictures look unless the design says otherwise. */
+export const DEFAULT_PICTURE_STYLE = "Editorial photograph, natural light, simple uncluttered composition";
+
 export type TextSlot = "kicker" | "title" | "subtitle" | "text" | "number" | "author" | "role" | "action" | "handle";
 
 export interface Limit {

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { type BlockDesign, type BlockTheme, type BlockVariant, type VisualBlockType, type VisualPart } from "@mycanvas/shared";
+import { api } from "../../api";
 import { syncedPages, useEditorStore } from "../../store/editorStore";
 import { BLOCKS, BLOCK_LIST, convertSlots, variantFor } from "../../utils/blocks/catalog";
 import { THEMES } from "../../utils/blocks/themes";
@@ -36,27 +37,38 @@ export function BlockSection() {
   const redrawBlocks = useEditorStore((state) => state.redrawBlocks);
   const showToast = useEditorStore((state) => state.showToast);
   const [busy, setBusy] = useState(false);
+  const [imageReady, setImageReady] = useState(false);
+  const [making, setMaking] = useState(false);
+  const [subjectDraft, setSubjectDraft] = useState<{ partId: string; text: string } | null>(null);
+  useEffect(() => {
+    void api.aiStatus().then((status) => { setImageReady(status.image); }).catch(() => undefined);
+  }, []);
   const blocks = design?.blocks;
   const part = blocks?.parts.find((entry) => entry.pageId === activePageId);
   if (!design || !blocks || !part) {
     return null;
   }
 
-  /** Redraws the given parts (with canvas edits read back) under a new block record. */
+  /** Redraws the given parts (with canvas edits read back) under a new block record. Reads the editor's current state, so it's safe after a slow step. */
   const redraw = async (next: BlockDesign, partIds: Set<string>) => {
+    const state = useEditorStore.getState();
+    const current = state.design;
+    if (!current?.blocks) {
+      return;
+    }
     setBusy(true);
     try {
       const { drawParts, partsWithEdits } = await import("../../utils/blocks/build");
-      const pages = syncedPages(design, activePageId);
+      const pages = syncedPages(current, state.activePageId);
       const order = pages.map((page) => page.id);
-      const edited = partsWithEdits(blocks, pages);
+      const edited = partsWithEdits(current.blocks, pages);
       // Edits made on the canvas are in the old record's slots; keep the new block/variant.
       const parts = next.parts.map((entry) => {
         const before = edited.find((candidate) => candidate.id === entry.id);
         return before?.block === entry.block ? { ...entry, slots: before.slots } : entry;
       });
       const toDraw = parts.filter((entry) => partIds.has(entry.id) && order.includes(entry.pageId));
-      const drawn = await drawParts(toDraw, next.theme, design.width, design.height, (entry) => ({ pageNumber: order.indexOf(entry.pageId) + 1, pageCount: order.length }));
+      const drawn = await drawParts(toDraw, next.theme, current.width, current.height, (entry) => ({ pageNumber: order.indexOf(entry.pageId) + 1, pageCount: order.length }));
       redrawBlocks(drawn.pages, { ...next, parts });
       if (drawn.overflowing.length > 0) {
         showToast(`Text is long for this block on page ${drawn.overflowing.join(", ")}, so it was drawn smaller.`);
@@ -66,15 +78,44 @@ export function BlockSection() {
     }
   };
 
-  const changePart = (change: (current: VisualPart) => VisualPart) => {
-    const pages = syncedPages(design, activePageId);
+  const changePart = (change: (current: VisualPart) => VisualPart, partId = part.id) => {
+    const state = useEditorStore.getState();
+    const now = state.design?.blocks;
+    const target = now?.parts.find((entry) => entry.id === partId);
+    if (!state.design || !now || !target) {
+      return;
+    }
     // Start from what's on the canvas now, so switching blocks carries edits along.
-    const page = pages.find((entry) => entry.id === part.pageId);
+    const page = syncedPages(state.design, state.activePageId).find((entry) => entry.id === target.pageId);
     void import("../../utils/blocks/render").then(({ readSlots }) => {
-      const current = page ? { ...part, slots: readSlots(part, page.layers) } : part;
+      const current = page ? { ...target, slots: readSlots(target, page.layers) } : target;
       const nextPart = change(current);
-      void redraw({ ...blocks, parts: blocks.parts.map((entry) => (entry.id === part.id ? nextPart : entry)) }, new Set([part.id]));
+      void redraw({ ...now, parts: now.parts.map((entry) => (entry.id === partId ? nextPart : entry)) }, new Set([partId]));
     });
+  };
+
+  const spec = BLOCKS[part.block];
+  const defaultSubject = (part.slots.imageQuery ?? [part.slots.title, part.slots.text ?? part.slots.subtitle].filter(Boolean).join(". ")).trim();
+  const subject = subjectDraft?.partId === part.id ? subjectDraft.text : defaultSubject;
+
+  const makePagePicture = async () => {
+    const wanted = subject.trim();
+    if (!wanted) {
+      return;
+    }
+    const partId = part.id;
+    setMaking(true);
+    try {
+      const { makePicture } = await import("../../utils/blocks/pictures");
+      const asset = await makePicture(part, design.width, design.height, blocks.pictureStyle, wanted);
+      useEditorStore.getState().bumpAssetsVersion();
+      changePart((current) => ({ ...current, slots: { ...current.slots, image: asset, imageQuery: wanted } }), partId);
+      setSubjectDraft(null);
+    } catch (reason) {
+      showToast(`Couldn't make the picture: ${reason instanceof Error ? reason.message : "the image model failed"}`);
+    } finally {
+      setMaking(false);
+    }
   };
 
   const switchBlock = (block: VisualBlockType) => {
@@ -95,7 +136,6 @@ export function BlockSection() {
     void redraw({ ...blocks, theme }, new Set(blocks.parts.map((entry) => entry.id)));
   };
 
-  const spec = BLOCKS[part.block];
   const themes = THEMES.some((theme) => theme.id === blocks.theme.id) ? THEMES : [blocks.theme, ...THEMES];
   const aligns = spec.aligns ?? (["left", "center", "right"] as const);
 
@@ -112,6 +152,22 @@ export function BlockSection() {
           {spec.description}
           .
         </p>
+        {spec.picture && imageReady && (
+          <div className="field block-picture">
+            <span>{part.slots.image ? "New picture" : "Picture"}</span>
+            <textarea
+              rows={2}
+              value={subject}
+              maxLength={300}
+              placeholder="What the picture should show"
+              disabled={making}
+              onChange={(e) => { setSubjectDraft({ partId: part.id, text: e.target.value }); }}
+            />
+            <button type="button" className="secondary" disabled={making || !subject.trim()} onClick={() => { void makePagePicture(); }}>
+              {making ? "Making picture…" : part.slots.image ? "Make another picture" : "Make picture"}
+            </button>
+          </div>
+        )}
         {aligns.length > 1 && <Choices label="Align" value={part.variant.align} options={aligns} labels={ALIGN_LABELS} onChange={(align) => { setVariant({ align }); }} />}
         <Choices label="Background" value={part.variant.accent} options={["plain", "tint", "bold"] as const} labels={ACCENT_LABELS} onChange={(accent) => { setVariant({ accent }); }} />
         {spec.sides && (part.block === "pictureText" || part.slots.image) && (

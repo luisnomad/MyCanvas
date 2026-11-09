@@ -105,6 +105,8 @@ export interface BlockDesign {
   /** The content the design was made from. */
   markdown: string;
   generatedAt: string;
+  /** How generated pictures should look ("Editorial photograph, natural light"). */
+  pictureStyle?: string;
 }
 
 const text = (value: unknown, max = 2000): string | undefined =>
@@ -214,5 +216,6 @@ export function cleanBlockDesign(value: unknown): BlockDesign | undefined {
     parts,
     markdown: text(candidate.markdown, 400_000) ?? "",
     generatedAt: text(candidate.generatedAt, 40) ?? new Date().toISOString(),
+    ...(text(candidate.pictureStyle, 300) ? { pictureStyle: text(candidate.pictureStyle, 300) } : {}),
   };
 }

@@ -3,6 +3,7 @@ import { cleanBlockDesign } from "@mycanvas/shared";
 import { convertSlots, slotProblems, variantFor } from "./catalog";
 import { readPlannedPart, repairPlan } from "./plan";
 import { figure, labelled, planWithRules } from "./rules";
+import { picturePrompt, pictureSize, wantsPicture } from "./pictures";
 
 const content = `# Finanzas desde el día uno
 **No necesitas un CFO para empezar.**
@@ -115,5 +116,29 @@ describe("cleanBlockDesign", () => {
     expect(clean?.theme.colors.primary).toBe("#abcdef");
     expect(clean?.theme.colors.text).toBe("#16181d");
     expect(cleanBlockDesign("nope")).toBeUndefined();
+  });
+});
+
+describe("pictures", () => {
+  const part = (block: "cover" | "pictureText" | "quote", slots: Record<string, string>, side?: "top" | "left") =>
+    ({ id: "p", pageId: "g", block, variant: { align: "left" as const, accent: "plain" as const, side }, slots });
+
+  it("chooses the pages that want a picture", () => {
+    expect(wantsPicture(part("pictureText", { title: "Workspace" }))).toBe(true);
+    expect(wantsPicture(part("pictureText", { title: "Workspace", image: "a.jpg" }))).toBe(false);
+    expect(wantsPicture(part("cover", { title: "Hello" }))).toBe(false);
+    expect(wantsPicture(part("cover", { title: "Hello", imageQuery: "A sunny desk" }))).toBe(true);
+  });
+
+  it("sizes pictures like their frame", () => {
+    expect(pictureSize(part("cover", { title: "x" }, "top"), 1080, 1350)).toEqual({ width: 1024, height: 640 });
+    const side = pictureSize(part("pictureText", { title: "x" }, "left"), 1080, 1350);
+    expect(side.height).toBe(1024);
+    expect(side.width).toBeLessThan(500);
+  });
+
+  it("asks for no text in the picture and uses the style", () => {
+    expect(picturePrompt("A desk.", "Watercolour")).toBe("A desk. Style: Watercolour. No text, no letters, no logos, no watermark.");
+    expect(picturePrompt("A desk", "  ")).toContain("Editorial photograph");
   });
 });

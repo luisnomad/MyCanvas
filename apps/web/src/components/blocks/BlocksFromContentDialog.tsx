@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { useEditorStore } from "../../store/editorStore";
 import { ensureFontLoaded } from "../../utils/fonts";
 import { IMPORT_ACCEPT, importContentFile } from "../../utils/import";
+import { DEFAULT_PICTURE_STYLE } from "../../utils/blocks/catalog";
 import { THEMES, themeFromFormat } from "../../utils/blocks/themes";
 
 export const BLOCK_PAGE_SIZES = [
@@ -41,13 +42,19 @@ export function BlocksFromContentDialog({ formats, folderId, onClose }: { format
   const [formatThemes, setFormatThemes] = useState<BlockTheme[]>([]);
   const [aiReady, setAiReady] = useState(false);
   const [useAi, setUseAi] = useState(true);
+  const [imageReady, setImageReady] = useState(false);
+  const [usePictures, setUsePictures] = useState(true);
+  const [pictureStyle, setPictureStyle] = useState("");
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ id: string; warnings: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void api.aiStatus().then((status) => { setAiReady(status.text); }).catch(() => undefined);
+    void api.aiStatus().then((status) => {
+      setAiReady(status.text);
+      setImageReady(status.image);
+    }).catch(() => undefined);
   }, []);
 
   // Themes from the person's formats: their fonts and colours.
@@ -111,11 +118,12 @@ export function BlocksFromContentDialog({ formats, folderId, onClose }: { format
       const { repairPlan } = await import("../../utils/blocks/plan");
       const { drawParts, partsFromPlan } = await import("../../utils/blocks/build");
       const warnings: string[] = [];
+      const pictures = usePictures && imageReady;
       let planned;
       if (useAi && aiReady) {
         const { planWithAi } = await import("../../utils/blocks/ai");
         try {
-          const ai = await planWithAi(markdown, setProgress);
+          const ai = await planWithAi(markdown, setProgress, { pictures });
           planned = ai.parts;
           warnings.push(...ai.warnings);
         } catch (reason) {
@@ -130,8 +138,25 @@ export function BlocksFromContentDialog({ formats, folderId, onClose }: { format
       if (repaired.length === 0) {
         throw new Error("No content to lay out. Add some text first.");
       }
+      let parts = partsFromPlan(repaired);
+      const style = pictureStyle.trim() || undefined;
+      if (pictures) {
+        const { makePictures } = await import("../../utils/blocks/pictures");
+        // Without the AI's suggestions, the cover gets a picture of the title.
+        if (!(useAi && aiReady)) {
+          parts = parts.map((part, index) => (index === 0 && part.block === "cover" && !part.slots.image && part.slots.title ? { ...part, slots: { ...part.slots, imageQuery: [part.slots.title, part.slots.subtitle].filter(Boolean).join(". ") } } : part));
+        }
+        const made = await makePictures(parts, size.width, size.height, style, setProgress);
+        parts = made.parts;
+        if (made.failed.length > 0) {
+          warnings.push(`${String(made.failed.length)} picture${made.failed.length === 1 ? "" : "s"} couldn't be made (${made.failed[0] ?? ""}). Those frames are empty: make one from the page's block panel, or drop an image in.`);
+        }
+        if (made.skipped > 0) {
+          warnings.push(`${String(made.skipped)} more page${made.skipped === 1 ? "" : "s"} could have a picture. Make them from each page's block panel.`);
+        }
+        useEditorStore.getState().bumpAssetsVersion();
+      }
       setProgress("Drawing pages…");
-      const parts = partsFromPlan(repaired);
       const drawn = await drawParts(parts, theme, size.width, size.height);
       if (drawn.overflowing.length > 0) {
         warnings.push(`Text is long for its block on page ${drawn.overflowing.join(", ")}: it was drawn smaller. Shorten it there, or switch the page to another block.`);
@@ -144,7 +169,7 @@ export function BlocksFromContentDialog({ formats, folderId, onClose }: { format
         height: size.height,
         pages: drawn.pages,
         folderId,
-        blocks: { theme, parts: drawn.parts, markdown, generatedAt: new Date().toISOString() },
+        blocks: { theme, parts: drawn.parts, markdown, generatedAt: new Date().toISOString(), ...(style ? { pictureStyle: style } : {}) },
       });
       if (warnings.length === 0) {
         window.location.hash = `#/edit/${design.id}`;
@@ -246,6 +271,22 @@ export function BlocksFromContentDialog({ formats, folderId, onClose }: { format
                     ? "Let the AI split the content and choose the blocks (it keeps your words, shortening only to fit)"
                     : "Without an AI text model, the content's headings, lists and quotes decide the blocks (AI settings are in your avatar menu)"}
                 </label>
+                {imageReady && (
+                  <>
+                    <label className="ai-check">
+                      <input type="checkbox" checked={usePictures} onChange={(e) => { setUsePictures(e.target.checked); }} />
+                      {useAi && aiReady
+                        ? "Make pictures with the image model for the pages that suit one (the cover and a few others; each takes a while)"
+                        : "Make a cover picture with the image model"}
+                    </label>
+                    {usePictures && (
+                      <label className="field field-wide">
+                        <span>Picture style</span>
+                        <input value={pictureStyle} maxLength={300} placeholder={DEFAULT_PICTURE_STYLE} onChange={(e) => { setPictureStyle(e.target.value); }} />
+                      </label>
+                    )}
+                  </>
+                )}
                 {progress && <p className="content-ai-busy" role="status">{progress}</p>}
                 {error && <p className="form-error">{error}</p>}
                 <div className="dialog-actions">

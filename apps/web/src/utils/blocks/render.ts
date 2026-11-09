@@ -14,6 +14,7 @@ import {
   defaultStroke,
 } from "@mycanvas/shared";
 import { coverContent } from "../frames";
+import { type Box, pictureBox } from "./layout";
 import { mix } from "./themes";
 
 /*
@@ -49,13 +50,6 @@ interface Palette {
   accent: string;
   onAccent: string;
   card: string;
-}
-
-interface Box {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 /** Layers laid out from y = 0 down, and how tall they are. */
@@ -546,18 +540,14 @@ function attempt(input: RenderInput, scale: number): { layers: Layer[]; fits: bo
   const layers: Layer[] = [];
 
   const spec = part.block;
-  const wantsPicture = spec === "pictureText" || ((spec === "cover" || spec === "quote") && part.slots.image !== undefined);
-  if (wantsPicture) {
-    const side = part.variant.side ?? "top";
-    if (side === "top") {
-      const pictureHeight = Math.round(H * (spec === "cover" ? 0.5 : 0.46));
-      layers.push(pictureFrame(input, { x: 0, y: 0, width: W, height: pictureHeight }, 0));
-      area = { x: margin, y: pictureHeight + margin * 0.7, width: W - margin * 2, height: H - pictureHeight - margin * 1.7 - footer };
+  const picture = pictureBox(part, W, H);
+  const wantsPicture = picture !== null;
+  if (picture) {
+    layers.push(pictureFrame(input, picture, 0));
+    if (picture.width === W) {
+      area = { x: margin, y: picture.height + margin * 0.7, width: W - margin * 2, height: H - picture.height - margin * 1.7 - footer };
     } else {
-      const pictureWidth = Math.round(W * 0.46);
-      const pictureX = side === "left" ? 0 : W - pictureWidth;
-      layers.push(pictureFrame(input, { x: pictureX, y: 0, width: pictureWidth, height: H }, 0));
-      area = { x: side === "left" ? pictureWidth + margin * 0.7 : margin, y: margin, width: W - pictureWidth - margin * 1.7, height: H - margin * 2 - footer };
+      area = { x: picture.x === 0 ? picture.width + margin * 0.7 : margin, y: margin, width: W - picture.width - margin * 1.7, height: H - margin * 2 - footer };
     }
   }
 

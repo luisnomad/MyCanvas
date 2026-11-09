@@ -12,7 +12,7 @@ import { readPlannedPart } from "./plan";
  * and whatever is still wrong is repaired in code afterwards.
  */
 
-function describeSpec(spec: BlockSpec): string {
+function describeSpec(spec: BlockSpec, pictures: boolean): string {
   const slots: string[] = [];
   for (const [slot, limit] of Object.entries(spec.text)) {
     slots.push(`${slot} (≤${String(limit.max)}${limit.required ? ", required" : ""})`);
@@ -26,14 +26,21 @@ function describeSpec(spec: BlockSpec): string {
   }
   if (spec.picture) {
     slots.push("image (a file name from the content, only if it has one)");
+    if (pictures) {
+      slots.push("imageQuery (≤120, a picture to make for the page)");
+    }
   }
   return `- ${spec.type}: ${spec.description}. Slots: ${slots.join("; ")}`;
 }
 
-const SYSTEM = `You lay out content as a carousel: one visual block per page.
+function system(pictures: boolean): string {
+  const pictureRule = pictures
+    ? `- Pictures: an image that is in the content (written ![alt](file)) goes in "image" on a "pictureText" page. Pictures can also be made: give the cover, and "pictureText" pages for ideas that are easy to picture, an "imageQuery" in English describing one concrete photo (subject, setting, mood, no text in it). At most one page in three gets a picture; leave "imageQuery" out everywhere else.`
+    : `- "pictureText" only for images that are in the content (written ![alt](file)); put that file name in "image".`;
+  return `You lay out content as a carousel: one visual block per page.
 
 Blocks you can use:
-${BLOCK_LIST.map(describeSpec).join("\n")}
+${BLOCK_LIST.map((spec) => describeSpec(spec, pictures)).join("\n")}
 
 Rules:
 - Use the author's own words and language. Shorten only to fit a limit, never add facts, figures, names or claims. ≤N means at most N characters.
@@ -42,10 +49,11 @@ Rules:
 - Start with "cover" when the content has a title. Use "closing" only if the content ends with a call to action or wrap-up.
 - Pick the block that matches the content's shape: an ordered process → steps; parallel ideas → cards; a list → points; figures that are in the text → stats; two sides → compare; dates → timeline; a key sentence → statement; someone's words → quote; a heading that opens a part → section.
 - Vary blocks; avoid the same block more than twice in a row.
-- "pictureText" only for images that are in the content (written ![alt](file)); put that file name in "image".
+${pictureRule}
 - Everything important in the content must appear on some page.
 
 Answer with JSON only: {"parts":[{"block":"cover","slots":{"title":"…","subtitle":"…"}},{"block":"steps","slots":{"title":"…","items":[{"label":"…","text":"…"}]}}]}`;
+}
 
 /** Splits content at headings into chunks of about `size` characters. */
 function chunks(markdown: string, size = 5000): string[] {
@@ -84,9 +92,9 @@ function readParts(answer: string, images: Set<string>): { parts: PlannedPart[];
   return { parts, dropped };
 }
 
-async function fixPart(part: PlannedPart, problems: string[], images: Set<string>): Promise<PlannedPart> {
+async function fixPart(part: PlannedPart, problems: string[], images: Set<string>, pictures: boolean): Promise<PlannedPart> {
   const answer = await aiText({
-    system: SYSTEM,
+    system: system(pictures),
     prompt: `This page breaks its block's limits:\n${problems.map((problem) => `- ${problem}`).join("\n")}\n\nPage:\n${JSON.stringify(part)}\n\nAnswer with the corrected page only, same JSON shape ({"block":…,"slots":…}). You may pick another block if the content fits it better. Shorten by rephrasing, keeping the meaning and language.`,
     json: true,
     temperature: 0.2,
@@ -100,7 +108,8 @@ export interface AiPlan {
   warnings: string[];
 }
 
-export async function planWithAi(markdown: string, onProgress: (message: string) => void): Promise<AiPlan> {
+export async function planWithAi(markdown: string, onProgress: (message: string) => void, options: { pictures?: boolean } = {}): Promise<AiPlan> {
+  const pictures = options.pictures ?? false;
   const images = imagesOf(markdown);
   const warnings: string[] = [];
   const parts: PlannedPart[] = [];
@@ -108,7 +117,7 @@ export async function planWithAi(markdown: string, onProgress: (message: string)
   for (const [index, piece] of pieces.entries()) {
     onProgress(pieces.length > 1 ? `Planning pages (part ${String(index + 1)} of ${String(pieces.length)})…` : "Planning pages…");
     const answer = await aiText({
-      system: SYSTEM,
+      system: system(pictures),
       prompt: `${index > 0 ? "This continues earlier content: no cover.\n\n" : ""}Content:\n\n${piece}`,
       json: true,
       temperature: 0.2,
@@ -133,7 +142,7 @@ export async function planWithAi(markdown: string, onProgress: (message: string)
     const part = parts[entry.index];
     if (part) {
       try {
-        parts[entry.index] = await fixPart(part, entry.problems, images);
+        parts[entry.index] = await fixPart(part, entry.problems, images, pictures);
       } catch {
         // Keep it; the repair step makes it drawable.
       }
@@ -141,7 +150,7 @@ export async function planWithAi(markdown: string, onProgress: (message: string)
   }
 
   // Did everything make it in? Words of the content missing from the pages.
-  const pageWords = new Set(wordsOf(JSON.stringify(parts.map((part) => part.slots))));
+  const pageWords = new Set(wordsOf(JSON.stringify(parts.map(({ slots: { imageQuery: _query, ...shown } }) => shown))));
   const contentWords = wordsOf(markdown).filter((word) => word.length > 3);
   const missing = contentWords.filter((word) => !pageWords.has(word));
   if (contentWords.length > 0 && missing.length / contentWords.length > 0.35) {
