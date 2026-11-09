@@ -265,7 +265,13 @@ describe("document formats", () => {
   });
 
   it("creates a document from ready-made pages and remembers its source", async () => {
-    const source = { formatId: "f1", formatName: "Blue", markdown: "# Hi", generatedAt: "2026-11-09T00:00:00.000Z" };
+    const source = {
+      formatId: "f1",
+      formatName: "Blue",
+      markdown: "# Hi",
+      generatedAt: "2026-11-09T00:00:00.000Z",
+      formatUpdatedAt: "2026-11-08T12:00:00.000Z",
+    };
     const pages = [{ id: "a", background: "#00f", layers: [] }, { id: "b", background: "#00f", layers: [] }];
     const res = await app.request("/api/designs", json(BOB, "POST", { name: "Doc", width: 794, height: 1123, pages, source }));
     expect(res.status).toBe(201);

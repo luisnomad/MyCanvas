@@ -90,6 +90,7 @@ function cleanSource(source: unknown): DocumentSource | undefined {
     formatName: typeof candidate.formatName === "string" ? candidate.formatName : "",
     markdown: candidate.markdown,
     generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : new Date().toISOString(),
+    ...(typeof candidate.formatUpdatedAt === "string" ? { formatUpdatedAt: candidate.formatUpdatedAt } : {}),
   };
 }
 

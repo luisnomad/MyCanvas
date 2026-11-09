@@ -3,6 +3,7 @@ import { type DesignSummary } from "@mycanvas/shared";
 import { useEditorStore } from "../../store/editorStore";
 import { ContentDialog } from "./ContentDialog";
 import { FormatFontsDialog } from "./FormatFontsDialog";
+import { useFormatStatus } from "./useFormatStatus";
 
 /**
  * Top-bar entry for document formats. On a format: what the pages mean,
@@ -16,6 +17,7 @@ export function FormatMenu() {
   const [open, setOpen] = useState(false);
   const [dialog, setDialog] = useState<"create" | "reflow" | "fonts" | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const formatStatus = useFormatStatus(design?.kind === "format" ? undefined : design?.source);
 
   useEffect(() => {
     if (!open) {
@@ -43,13 +45,18 @@ export function FormatMenu() {
       <>
         <button
           type="button"
-          className="secondary"
-          title={`Edit the text and lay it out again with "${source.formatName}"`}
+          className={formatStatus.state === "changed" ? "secondary format-changed" : "secondary"}
+          title={formatStatus.state === "changed"
+            ? `"${source.formatName}" has changed since this document was laid out. Edit content to re-flow it with the new version.`
+            : `Edit the text and lay it out again with "${source.formatName}"`}
           onClick={() => { setDialog("reflow"); }}
         >
           Edit content
+          {formatStatus.state === "changed" && <span className="format-changed-dot" aria-label="(format changed)" />}
         </button>
-        {dialog === "reflow" && <ContentDialog mode="reflow" source={source} onClose={() => { setDialog(null); }} />}
+        {dialog === "reflow" && (
+          <ContentDialog mode="reflow" source={source} formatStatus={formatStatus} onClose={() => { setDialog(null); }} />
+        )}
       </>
     );
   }

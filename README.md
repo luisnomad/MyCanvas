@@ -130,6 +130,8 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   a page.
 - Documents stay normal designs: edit anything by hand. "Edit content"
   re-flows the text with the format's latest version (one undo step).
+  Each document records which version of its format it was laid out with;
+  when the format changes later, "Edit content" shows a marker and says so.
 
 - Project list with thumbnails, search, duplicate and delete.
 - Project folders (e.g. one per customer): create, rename and delete folders,

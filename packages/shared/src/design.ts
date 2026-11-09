@@ -280,6 +280,9 @@ export interface DocumentSource {
   /** The content, in the format's simple Markdown dialect. */
   markdown: string;
   generatedAt: string;
+  /** The format's version used: its updatedAt when the layout was made.
+   *  Absent on documents from before versioning (use generatedAt). */
+  formatUpdatedAt?: string;
 }
 
 /** A design as stored on disk: older files keep one page's content inline. */

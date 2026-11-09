@@ -3,7 +3,9 @@ import { type Design, type DesignSummary, type DocumentSource } from "@mycanvas/
 import { api } from "../../api";
 import { useEditorStore } from "../../store/editorStore";
 import { CONTENT_SYNTAX, layoutDocument, parseContent } from "../../utils/document-format";
+import { relativeTime } from "../../utils/relative-time";
 import { useAssetLibrary } from "../uploads/library";
+import { type FormatStatus } from "./useFormatStatus";
 
 type ContentDialogProps =
   | {
@@ -18,6 +20,7 @@ type ContentDialogProps =
     /** Edit the open document's content and lay it out again. */
     mode: "reflow";
     source: DocumentSource;
+    formatStatus: FormatStatus;
     onClose: () => void;
   };
 
@@ -34,6 +37,25 @@ Bookkeeping, taxes and filings up to date.
 
 > KEY SIGNAL · Close every month: catching mistakes early avoids surprises at year end.
 `;
+
+/** Which version of the format the document used, and whether it changed since. */
+function FormatVersionNote({ source, status }: { source: DocumentSource; status: FormatStatus }) {
+  const made = relativeTime(source.generatedAt);
+  switch (status.state) {
+    case "changed":
+      return (
+        <p className="format-version-note changed">
+          {`The format has changed since this document was laid out (${made}; format saved ${relativeTime(status.formatUpdatedAt)}). Re-flow to apply it.`}
+        </p>
+      );
+    case "current":
+      return <p className="format-version-note">{`Laid out ${made} with the format's current version.`}</p>;
+    case "missing":
+      return <p className="format-version-note changed">The format was deleted, so this document can't be re-flowed. Its pages stay as they are.</p>;
+    default:
+      return null;
+  }
+}
 
 /** Thumbnail picker that inserts an image line at the cursor. */
 function ImagePicker({ onPick }: { onPick: (asset: string, name: string) => void }) {
@@ -115,6 +137,7 @@ export function ContentDialog(props: ContentDialogProps) {
         formatName: format.name,
         markdown,
         generatedAt: new Date().toISOString(),
+        formatUpdatedAt: format.updatedAt,
       };
       if (props.mode === "reflow") {
         const store = useEditorStore.getState();
@@ -163,12 +186,15 @@ export function ContentDialog(props: ContentDialogProps) {
               </div>
             )
           : (
-              <p className="muted">
-                Laid out again with the latest version of
-                {" "}
-                <strong>{props.source.formatName || "its format"}</strong>
-                . This replaces every page, including edits made by hand; Undo brings them back.
-              </p>
+              <>
+                <p className="muted">
+                  Laid out again with the latest version of
+                  {" "}
+                  <strong>{props.source.formatName || "its format"}</strong>
+                  . This replaces every page, including edits made by hand; Undo brings them back.
+                </p>
+                <FormatVersionNote source={props.source} status={props.formatStatus} />
+              </>
             )}
         <div className="content-editor">
           <label className="field field-wide content-text">

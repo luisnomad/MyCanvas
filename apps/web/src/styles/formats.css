@@ -213,6 +213,31 @@
   }
 }
 
+.format-changed {
+  position: relative;
+}
+
+.format-changed-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--warning);
+  border: 2px solid var(--surface);
+}
+
+.format-version-note {
+  margin: -6px 0 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.format-version-note.changed {
+  color: var(--warning);
+}
+
 .hero-actions {
   display: flex;
   justify-content: center;
