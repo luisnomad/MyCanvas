@@ -231,14 +231,18 @@ export async function analyzePdf(file: File, maxPages = 2): Promise<{ pages: Ana
     // drawing is switched off for every 2D context, just for this render.
     const art = make();
     const proto = CanvasRenderingContext2D.prototype;
-    const { fillText, strokeText } = proto;
-    proto.fillText = () => undefined;
-    proto.strokeText = () => undefined;
+    const saved = (["fillText", "strokeText"] as const).map((name) => [name, Object.getOwnPropertyDescriptor(proto, name)] as const);
+    for (const [name] of saved) {
+      Object.defineProperty(proto, name, { configurable: true, writable: true, value: () => undefined });
+    }
     try {
       await page.render({ canvas: art.canvas, canvasContext: art.context, viewport }).promise;
     } finally {
-      proto.fillText = fillText;
-      proto.strokeText = strokeText;
+      for (const [name, descriptor] of saved) {
+        if (descriptor) {
+          Object.defineProperty(proto, name, descriptor);
+        }
+      }
     }
 
     const width = full.canvas.width;
