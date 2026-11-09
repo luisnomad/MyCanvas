@@ -3,6 +3,7 @@ import { type Design, type DesignSummary, type DocumentSource } from "@mycanvas/
 import { api } from "../../api";
 import { useEditorStore } from "../../store/editorStore";
 import { CONTENT_SYNTAX, layoutDocument, parseContent } from "../../utils/document-format";
+import { IMPORT_ACCEPT, importContentFile } from "../../utils/import";
 import { relativeTime } from "../../utils/relative-time";
 import { useAssetLibrary } from "../uploads/library";
 import { type FormatStatus } from "./useFormatStatus";
@@ -92,6 +93,11 @@ export function ContentDialog(props: ContentDialogProps) {
   /** Shown after a layout with problems; the next click goes ahead anyway. */
   const [warnings, setWarnings] = useState<string[] | null>(null);
   const [pickingImage, setPickingImage] = useState(false);
+  const [importing, setImporting] = useState(false);
+  /** After an import: what was found, problems, and the text it replaced. */
+  const [imported, setImported] = useState<{ summary: string; warnings: string[]; previous: string } | null>(null);
+  const [pagePerSourcePage, setPagePerSourcePage] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { onClose } = props;
 
@@ -112,6 +118,33 @@ export function ContentDialog(props: ContentDialogProps) {
       area?.focus();
       area?.setSelectionRange(caret, caret);
     });
+  };
+
+  const importFile = async (file: File) => {
+    setImporting(true);
+    setError(null);
+    try {
+      const result = await importContentFile(
+        file,
+        async (blob, imageName) => (await api.uploadAsset(new File([blob], imageName, { type: blob.type }))).asset,
+        { pagePerSourcePage },
+      );
+      if (!result.markdown.trim()) {
+        setError(result.warnings[0] ?? `No text found in ${file.name}.`);
+        return;
+      }
+      // Imported images are new uploads: refresh the library everywhere.
+      useEditorStore.getState().bumpAssetsVersion();
+      setImported({ summary: result.summary, warnings: result.warnings, previous: markdown });
+      setMarkdown(result.markdown);
+      if (props.mode === "create" && !name.trim() && !/^# /m.test(result.markdown)) {
+        setName(file.name.replace(/\.[^.]+$/, ""));
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? `Couldn't import ${file.name}: ${reason.message}` : `Couldn't import ${file.name}`);
+    } finally {
+      setImporting(false);
+    }
   };
 
   const run = async () => {
@@ -200,9 +233,40 @@ export function ContentDialog(props: ContentDialogProps) {
           <label className="field field-wide content-text">
             <span>
               Content
-              <button type="button" className="link-button" onClick={() => { setPickingImage((open) => !open); }}>
-                {pickingImage ? "Close images" : "Insert image…"}
-              </button>
+              <span className="content-tools">
+                <button
+                  type="button"
+                  className="link-button"
+                  disabled={importing}
+                  title="Word, PowerPoint, PDF or Markdown: its text and images become the content below"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    fileRef.current?.click();
+                  }}
+                >
+                  {importing ? "Importing…" : "Import file…"}
+                </button>
+                <label className="content-option" title="PowerPoint and PDF: each slide or page starts a new page">
+                  <input type="checkbox" checked={pagePerSourcePage} onChange={(e) => { setPagePerSourcePage(e.target.checked); }} />
+                  Page per slide
+                </label>
+                <button type="button" className="link-button" onClick={(e) => { e.preventDefault(); setPickingImage((open) => !open); }}>
+                  {pickingImage ? "Close images" : "Insert image…"}
+                </button>
+              </span>
+              <input
+                ref={fileRef}
+                type="file"
+                accept={IMPORT_ACCEPT}
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) {
+                    void importFile(file);
+                  }
+                }}
+              />
             </span>
             <textarea
               ref={textareaRef}
@@ -240,6 +304,30 @@ export function ContentDialog(props: ContentDialogProps) {
                 )}
           </aside>
         </div>
+        {imported && (
+          <div className="content-imported" role="status">
+            <span>
+              {`Imported ${imported.summary}. Check the text, then lay it out.`}
+              {imported.previous.trim() && (
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    setMarkdown(imported.previous);
+                    setImported(null);
+                  }}
+                >
+                  Restore previous text
+                </button>
+              )}
+            </span>
+            {imported.warnings.length > 0 && (
+              <ul>
+                {imported.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
         {warnings && (
           <div className="content-warnings" role="alert">
             <strong>Check before continuing:</strong>

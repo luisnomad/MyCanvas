@@ -64,16 +64,20 @@ export function parseContent(markdown: string): ContentItem[] {
   };
 
   for (const rawLine of markdown.replace(/\r\n?/g, "\n").split("\n")) {
-    const line = rawLine.trim();
-    const title = /^#\s+(.*)$/.exec(line);
-    const heading = /^#{2,6}\s+(.*)$/.exec(line);
-    const quote = /^>\s?(.*)$/.exec(line);
-    const image = /^!\[([^\]]*)\]\(\s*([^)\s]+)\s*\)$/.exec(line);
-    const bullet = /^(?:[-*•]|\d+[.)])\s+(.*)$/.exec(line);
+    const trimmed = rawLine.trim();
+    // A leading "\" makes the rest of the line plain text (e.g. "\1. Not a list").
+    const escaped = trimmed.startsWith("\\");
+    const line = escaped ? trimmed.slice(1) : trimmed;
+    const syntax = escaped ? "" : line;
+    const title = /^#\s+(.*)$/.exec(syntax);
+    const heading = /^#{2,6}\s+(.*)$/.exec(syntax);
+    const quote = /^>\s?(.*)$/.exec(syntax);
+    const image = /^!\[([^\]]*)\]\(\s*([^)\s]+)\s*\)$/.exec(syntax);
+    const bullet = /^(?:[-*•]|\d+[.)])\s+(.*)$/.exec(syntax);
 
     if (!line) {
       flush();
-    } else if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) {
+    } else if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(syntax)) {
       flush();
       items.push({ kind: "pageBreak" });
     } else if (title) {

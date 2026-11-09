@@ -128,6 +128,13 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   `---` new page) and lays it out: blocks stack in the flow area and continue
   on new pages; long paragraphs split across pages, and a heading never ends
   a page.
+- Import a file instead of typing: Word (.docx), PowerPoint (.pptx), PDF or
+  Markdown. Headings, leads, lists, quotes and tables are recognised from
+  styles where they exist and from size and boldness where a document was
+  styled by hand; embedded Word/PowerPoint images go to your Uploads. PDFs
+  are read column by column, without running headers, footers or page
+  numbers; scanned PDFs (no text layer) are reported. Optionally, each slide
+  or page starts a new page. The result lands in the editor to check first.
 - Documents stay normal designs: edit anything by hand. "Edit content"
   re-flows the text with the format's latest version (one undo step).
   Each document records which version of its format it was laid out with;
