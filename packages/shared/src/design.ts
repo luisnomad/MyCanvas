@@ -269,8 +269,18 @@ export interface Design {
   kind?: "format";
   /** Set on documents made from a format, so the content can be re-flowed. */
   source?: DocumentSource;
+  /** Formats only: instructions for the AI tools. */
+  formatAi?: FormatAiInstructions;
   createdAt: string;
   updatedAt: string;
+}
+
+/** How AI should treat content for a format, in the person's own words. */
+export interface FormatAiInstructions {
+  /** E.g. "Lines starting with IDEA CLAVE or SEÑAL CLAVE are callouts." */
+  contentRules?: string;
+  /** Visual style added to every illustration prompt. */
+  illustrationStyle?: string;
 }
 
 /** The content and format a generated document was made from. */

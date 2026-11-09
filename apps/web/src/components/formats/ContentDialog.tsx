@@ -3,6 +3,7 @@ import { type Design, type DesignSummary, type DocumentSource } from "@mycanvas/
 import { api } from "../../api";
 import { useEditorStore } from "../../store/editorStore";
 import { CONTENT_SYNTAX, layoutDocument, parseContent } from "../../utils/document-format";
+import { generateImageAsset, illustrationPrompt, illustrationSize, insertImages, planIllustrations, tidyContent } from "../../utils/ai-content";
 import { IMPORT_ACCEPT, importContentFile } from "../../utils/import";
 import { relativeTime } from "../../utils/relative-time";
 import { useAssetLibrary } from "../uploads/library";
@@ -97,6 +98,15 @@ export function ContentDialog(props: ContentDialogProps) {
   /** After an import: what was found, problems, and the text it replaced. */
   const [imported, setImported] = useState<{ summary: string; warnings: string[]; previous: string } | null>(null);
   const [pagePerSourcePage, setPagePerSourcePage] = useState(false);
+  /** Which AI jobs are set up (null while checking). */
+  const [aiReady, setAiReady] = useState<{ text: boolean; image: boolean } | null>(null);
+  /** Progress of a running AI action. */
+  const [aiBusy, setAiBusy] = useState<string | null>(null);
+  const [illustrationCount, setIllustrationCount] = useState(3);
+
+  useEffect(() => {
+    void api.aiStatus().then(setAiReady).catch(() => { setAiReady({ text: false, image: false }); });
+  }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { onClose } = props;
@@ -144,6 +154,80 @@ export function ContentDialog(props: ContentDialogProps) {
       setError(reason instanceof Error ? `Couldn't import ${file.name}: ${reason.message}` : `Couldn't import ${file.name}`);
     } finally {
       setImporting(false);
+    }
+  };
+
+  const loadFormat = async (): Promise<Design> => {
+    try {
+      return await api.getDesign(formatId);
+    } catch {
+      throw new Error("The format couldn't be loaded. Was it deleted?");
+    }
+  };
+
+  const tidy = async () => {
+    setError(null);
+    setAiBusy("Tidying…");
+    try {
+      const format = await loadFormat();
+      const before = markdown;
+      const result = await tidyContent(before, format, setAiBusy);
+      const share = result.total > 0 ? result.changed / result.total : 0;
+      setMarkdown(result.markdown);
+      setImported({
+        summary: result.changed === 0
+          ? "Tidied with AI: structure only, every word kept"
+          : `Tidied with AI, but ${String(result.changed)} of ${String(result.total)} words changed (${result.examples.join(", ")})`,
+        warnings: share > 0.02 ? ["The model changed the wording more than it should. Check the text, or restore the previous version."] : [],
+        previous: before,
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Tidying failed");
+    } finally {
+      setAiBusy(null);
+    }
+  };
+
+  const illustrate = async () => {
+    setError(null);
+    setAiBusy("Choosing where pictures help…");
+    try {
+      const format = await loadFormat();
+      const before = markdown;
+      const plan = await planIllustrations(before, format, illustrationCount);
+      if (plan.length === 0) {
+        throw new Error("The text model didn't find places for illustrations.");
+      }
+      const size = illustrationSize(format);
+      const placed: { after: number; line: string }[] = [];
+      const failures: string[] = [];
+      for (const [index, item] of plan.entries()) {
+        setAiBusy(`Drawing illustration ${String(index + 1)} of ${String(plan.length)}…`);
+        try {
+          const asset = await generateImageAsset(illustrationPrompt(item.subject, format), size, item.subject);
+          placed.push({ after: item.after, line: `![${item.subject.replace(/[[\]]/g, "")}](${asset})` });
+        } catch (reason) {
+          failures.push(reason instanceof Error ? reason.message : "An illustration failed");
+          // The same problem would hit every image (no model, refused key…): stop.
+          if (index === 0) {
+            break;
+          }
+        }
+      }
+      if (placed.length === 0) {
+        throw new Error(failures[0] ?? "No illustrations were made.");
+      }
+      useEditorStore.getState().bumpAssetsVersion();
+      setMarkdown(insertImages(before, placed));
+      setImported({
+        summary: `Added ${String(placed.length)} ${placed.length === 1 ? "illustration" : "illustrations"} (saved in your Uploads)`,
+        warnings: failures,
+        previous: before,
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Illustrating failed");
+    } finally {
+      setAiBusy(null);
     }
   };
 
@@ -338,13 +422,49 @@ export function ContentDialog(props: ContentDialogProps) {
         )}
         {error && <p className="form-error">{error}</p>}
         <div className="dialog-actions">
+          <div className="content-ai" aria-label="AI tools">
+            {aiBusy
+              ? <span className="content-ai-busy" role="status">{aiBusy}</span>
+              : (
+                  <>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={!aiReady?.text || !markdown.trim() || busy}
+                      title={aiReady?.text ? "Fix headings, callouts and broken lines with your text model; the words stay the same" : "Set up a text model in AI settings (your avatar menu)"}
+                      onClick={() => { void tidy(); }}
+                    >
+                      Tidy with AI
+                    </button>
+                    <span className="content-ai-group">
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={!aiReady?.text || !aiReady.image || !markdown.trim() || busy}
+                        title={aiReady?.text && aiReady.image ? "Your text model picks the spots; your image model draws them in the format's style" : "Needs both a text and an image model in AI settings (your avatar menu)"}
+                        onClick={() => { void illustrate(); }}
+                      >
+                        Add illustrations
+                      </button>
+                      <select
+                        aria-label="How many illustrations"
+                        value={illustrationCount}
+                        disabled={!aiReady?.text || !aiReady.image || busy}
+                        onChange={(e) => { setIllustrationCount(Number(e.target.value)); }}
+                      >
+                        {[1, 2, 3, 4, 5, 6].map((count) => <option key={count} value={count}>{count}</option>)}
+                      </select>
+                    </span>
+                  </>
+                )}
+          </div>
           <button type="button" className="secondary" disabled={busy} onClick={onClose}>
             Cancel
           </button>
           <button
             type="button"
             className="primary"
-            disabled={busy || !formatId || markdown.trim() === ""}
+            disabled={busy || aiBusy !== null || !formatId || markdown.trim() === ""}
             title="⌘/Ctrl+Enter"
             onClick={() => { void run(); }}
           >

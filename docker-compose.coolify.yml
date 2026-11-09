@@ -20,6 +20,8 @@ services:
       MYCANVAS_ACCESS_AUD: ${MYCANVAS_ACCESS_AUD:-}
       # Optional second gate after the Access policy (comma-separated).
       MYCANVAS_ALLOWED_EMAILS: ${MYCANVAS_ALLOWED_EMAILS:-}
+      # Encrypts stored AI keys; keep it out of the data volume and backups.
+      MYCANVAS_SECRET_KEY: ${MYCANVAS_SECRET_KEY:-}
     volumes:
       - mycanvas-data:/data
 

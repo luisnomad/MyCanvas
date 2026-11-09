@@ -22,3 +22,10 @@ export interface AssetInfo {
 
 /** Upload names the in-browser AI tools give their results. */
 export const GENERATED_ASSET_NAMES: readonly string[] = ["cutout.png", "portrait.png"];
+
+/** Name prefix of images made by an image model (AI settings). */
+export const AI_IMAGE_NAME_PREFIX = "AI image · ";
+
+export function isGeneratedAssetName(name: string): boolean {
+  return GENERATED_ASSET_NAMES.includes(name) || name.startsWith(AI_IMAGE_NAME_PREFIX);
+}

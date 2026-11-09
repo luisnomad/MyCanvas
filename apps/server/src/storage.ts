@@ -31,6 +31,10 @@ export interface Workspace {
   assetsManifestFile: string;
   settingsFile: string;
   foldersFile: string;
+  /** AI connections and assignments (no secrets). */
+  aiFile: string;
+  /** AI keys, encrypted (see secrets.ts). */
+  aiSecretsFile: string;
 }
 
 /** Folder-safe, readable key for an email ("Luis.SG@gmail.com" → "luis-sg-gmail-com"). */
@@ -51,6 +55,8 @@ function workspacePaths(email: string): Workspace {
     assetsManifestFile: path.join(root, "assets.json"),
     settingsFile: path.join(root, "settings.json"),
     foldersFile: path.join(root, "folders.json"),
+    aiFile: path.join(root, "ai.json"),
+    aiSecretsFile: path.join(root, "ai-secrets.json"),
   };
 }
 

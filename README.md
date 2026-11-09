@@ -85,6 +85,23 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   so the canvas never stutters. Originals are always preserved — every AI result
   is a new, undoable asset.
 
+**AI for documents (bring your own models)**
+
+- AI settings (avatar menu) per account: connections to Google Gemini,
+  any OpenAI-compatible server (llama.cpp, vLLM, Ollama, LM Studio,
+  OpenRouter, OpenAI) or ComfyUI (FLUX.2 klein preset or your own API
+  workflow), and which one does text and which does images, local and
+  cloud mixed freely.
+- A connection runs on the MyCanvas server (cloud APIs and machines on the
+  server's network; keys stored encrypted with `MYCANVAS_SECRET_KEY`, never
+  sent back to the browser) or on "this computer" (the browser talks to
+  Ollama/LM Studio/ComfyUI at localhost; any key stays in that browser).
+- Formats carry AI instructions: content rules and an illustration style.
+- "Tidy with AI" restructures content (callouts, leads, headings, broken
+  lines) without changing the words, and reports any word that changed.
+- "Add illustrations": the text model chooses where pictures help and what
+  they show; the image model draws them in the format's style into Uploads.
+
 **Images & assets**
 
 - Drag image files straight from the filesystem onto the canvas — they upload and

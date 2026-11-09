@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { type Me, api } from "../api";
+import { AiSettingsDialog } from "./ai/AiSettingsDialog";
 
 let cached: Promise<Me> | null = null;
 
@@ -7,6 +8,7 @@ let cached: Promise<Me> | null = null;
 export function UserBadge() {
   const [me, setMe] = useState<Me | null>(null);
   const [open, setOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -56,6 +58,17 @@ export function UserBadge() {
               ? "Your designs and uploads are private to this account."
               : "Local network access (owner workspace)."}
           </p>
+          <button
+            type="button"
+            className="secondary user-menu-ai"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              setAiOpen(true);
+            }}
+          >
+            AI settings…
+          </button>
           {me.logoutUrl && (
             <a className="button-link user-menu-signout" href={me.logoutUrl} role="menuitem">
               Sign out
@@ -63,6 +76,7 @@ export function UserBadge() {
           )}
         </div>
       )}
+      {aiOpen && <AiSettingsDialog onClose={() => { setAiOpen(false); }} />}
     </div>
   );
 }

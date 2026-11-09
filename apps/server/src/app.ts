@@ -15,12 +15,14 @@ import {
   type StoredDesign,
   type TemplateSummary,
   ASPECT_RATIOS,
-  GENERATED_ASSET_NAMES,
+  isGeneratedAssetName,
   GOOGLE_FONTS,
   normalizeDesign,
 } from "@mycanvas/shared";
 
+import { registerAiRoutes } from "./ai/routes";
 import { assetUsageIndex } from "./asset-usage";
+import { readAssetManifest, saveAsset } from "./assets-store";
 import { type Identity, identify } from "./auth";
 import { STARTER_TEMPLATES, findStarterTemplate } from "./starter-templates";
 import { listSystemFonts } from "./system-fonts";
@@ -284,6 +286,17 @@ app.put("/api/designs/:id", async (c) => {
       delete design.kind;
     }
   }
+  if ("formatAi" in body) {
+    const ai = body.formatAi as Partial<Record<"contentRules" | "illustrationStyle", unknown>> | undefined;
+    const text = (value: unknown) => (typeof value === "string" ? value.trim().slice(0, 4000) : "");
+    const contentRules = text(ai?.contentRules);
+    const illustrationStyle = text(ai?.illustrationStyle);
+    if (contentRules || illustrationStyle) {
+      design.formatAi = { contentRules, illustrationStyle };
+    } else {
+      delete design.formatAi;
+    }
+  }
   if ("source" in body) {
     const source = cleanSource(body.source);
     if (source) {
@@ -476,10 +489,6 @@ function isSafeAssetFile(file: string): boolean {
   return isSafeId(path.basename(file, path.extname(file))) && path.extname(file).toLowerCase() in IMAGE_TYPES;
 }
 
-async function readAssetManifest(ws: Workspace): Promise<Record<string, string>> {
-  return (await readJsonFile<Record<string, string>>(ws.assetsManifestFile)) ?? {};
-}
-
 /** The person's upload library, newest first, with where each image is used. */
 app.get("/api/assets", async (c) => {
   const ws = c.get("ws");
@@ -499,7 +508,7 @@ app.get("/api/assets", async (c) => {
         name,
         size: info.size,
         uploadedAt: info.mtime.toISOString(),
-        generated: GENERATED_ASSET_NAMES.includes(name),
+        generated: isGeneratedAssetName(name),
         usedIn: usage.get(asset) ?? [],
       };
     } catch {
@@ -527,11 +536,7 @@ app.post("/api/assets", async (c) => {
   if (!(ext in IMAGE_TYPES)) {
     return c.json({ error: `Unsupported file type: ${ext || "(none)"}` }, 400);
   }
-  const asset = `${newId()}${ext}`;
-  await writeFile(path.join(ws.assetsDir, asset), Buffer.from(await file.arrayBuffer()));
-  const manifest = await readAssetManifest(ws);
-  manifest[asset] = file.name;
-  await writeJsonFile(ws.assetsManifestFile, manifest);
+  const asset = await saveAsset(ws, Buffer.from(await file.arrayBuffer()), ext, file.name);
   return c.json({ asset, name: file.name }, 201);
 });
 
@@ -694,6 +699,8 @@ app.put("/api/fonts/favorites", async (c) => {
   await writeJsonFile(c.get("ws").settingsFile, settings);
   return c.json(settings);
 });
+
+registerAiRoutes(app);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 

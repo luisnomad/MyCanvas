@@ -2,6 +2,7 @@ import {
   type Design,
   type DesignPage,
   type DocumentSource,
+  type FormatAiInstructions,
   type FrameLayer,
   type GradientFill,
   type ImageLayer,
@@ -180,6 +181,8 @@ export interface EditorStore {
   movePage: (pageId: string, toIndex: number) => void;
   /** Marks the design as a document format (or back to a plain design). */
   setDesignKind: (kind: "format" | undefined) => void;
+  /** A format's instructions for the AI tools. */
+  setFormatAi: (formatAi: FormatAiInstructions) => void;
   /** Patches layers wherever they are, on any page (one undo step). */
   updateLayersOnAnyPage: (entries: { id: string; patch: LayerPatch }[]) => void;
   /** Replaces every page (one undo step), e.g. after re-flowing content. */
@@ -1095,6 +1098,15 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         })),
         activePageId,
       }));
+    },
+
+    setFormatAi: (formatAi) => {
+      const design = get().design;
+      if (!design) {
+        return;
+      }
+      set({ design: { ...design, formatAi } });
+      markDirty();
     },
 
     replacePages: (pages, source) => {

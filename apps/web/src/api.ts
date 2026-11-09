@@ -1,4 +1,16 @@
-import { type AssetInfo, type Design, type DesignPage, type DesignSummary, type DocumentSource, type Folder, type TemplateSummary } from "@mycanvas/shared";
+import {
+  type AiImageJob,
+  type AiModelInfo,
+  type AiSettings,
+  type AiSettingsInput,
+  type AssetInfo,
+  type Design,
+  type DesignPage,
+  type DesignSummary,
+  type DocumentSource,
+  type Folder,
+  type TemplateSummary,
+} from "@mycanvas/shared";
 
 export class ApiError extends Error {
   status: number;
@@ -103,6 +115,16 @@ export const api = {
   /** Rejects with ApiError 409 (body.usedIn) for images in use unless `force`. */
   deleteAsset: (file: string, force = false) =>
     request<{ ok: boolean }>(`/api/assets/${encodeURIComponent(file)}${force ? "?force=1" : ""}`, { method: "DELETE" }),
+  aiSettings: () => request<AiSettings>("/api/ai/settings"),
+  saveAiSettings: (input: AiSettingsInput) => request<AiSettings>("/api/ai/settings", jsonInit("PUT", input)),
+  /** Also tests the connection: rejects with the provider's message when it can't connect. */
+  aiModels: (connectionId: string) => request<{ models: AiModelInfo[] }>("/api/ai/models", jsonInit("POST", { connectionId })),
+  aiStatus: () => request<{ text: boolean; image: boolean }>("/api/ai/status"),
+  aiText: (input: { system: string; prompt: string; json?: boolean; temperature?: number }) =>
+    request<{ text: string; model: string; connection: string }>("/api/ai/text", jsonInit("POST", input)),
+  startAiImage: (input: { prompt: string; width: number; height: number; name?: string }) =>
+    request<AiImageJob>("/api/ai/image", jsonInit("POST", input)),
+  aiJob: (id: string) => request<AiImageJob>(`/api/ai/jobs/${encodeURIComponent(id)}`),
   systemFonts: () => request<string[]>("/api/fonts/system"),
   getFontFavorites: () => request<{ googleFontFavorites: string[] }>("/api/fonts/favorites"),
   setFontFavorites: (favorites: string[]) =>

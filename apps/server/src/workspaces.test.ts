@@ -1,6 +1,6 @@
 import { generateKeyPairSync, sign } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -299,5 +299,67 @@ describe("legacy data migration", () => {
     expect(existsSync(path.join(legacyDir, "users", "owner-example-com", "designs", "old.json"))).toBe(true);
     expect(existsSync(path.join(legacyDir, "designs"))).toBe(false);
     expect(await storage.migrateLegacyDataIn(legacyDir, OWNER)).toEqual([]);
+  });
+});
+
+describe("AI settings", () => {
+  const json = (email: string, method: string, body: unknown): RequestInit =>
+    as(email, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const KEY = "AIzaSyTEST-not-a-real-key-1234";
+
+  it("stores keys encrypted, never returns them, and keeps them per workspace", async () => {
+    const save = await app.request("/api/ai/settings", json(ALICE, "PUT", {
+      connections: [{ id: "g1", kind: "gemini", name: "Gemini", apiKey: KEY }],
+      text: { connectionId: "g1", model: "gemini-flash" },
+      image: null,
+    }));
+    expect(save.status).toBe(200);
+    const saved = await save.text();
+    expect(saved).not.toContain(KEY);
+    expect(JSON.parse(saved)).toMatchObject({ connections: [{ id: "g1", hasKey: true, keyHint: "1234" }] });
+    // On disk: settings without the key, secrets only as ciphertext.
+    const dir = path.join(dataDir, "users", "alice-example-com");
+    expect(await readFile(path.join(dir, "ai.json"), "utf8")).not.toContain(KEY);
+    expect(await readFile(path.join(dir, "ai-secrets.json"), "utf8")).not.toContain(KEY);
+    // Saving again without apiKey keeps the key; null removes it.
+    await app.request("/api/ai/settings", json(ALICE, "PUT", {
+      connections: [{ id: "g1", kind: "gemini", name: "Gemini renamed" }],
+      text: { connectionId: "g1", model: "gemini-flash" },
+      image: null,
+    }));
+    const kept = (await (await app.request("/api/ai/settings", as(ALICE))).json()) as { connections: { hasKey: boolean; name: string }[] };
+    expect(kept.connections[0]).toMatchObject({ hasKey: true, name: "Gemini renamed" });
+    // Another person sees nothing of it.
+    const bob = (await (await app.request("/api/ai/settings", as(BOB))).json()) as { connections: unknown[]; text: unknown };
+    expect(bob).toMatchObject({ connections: [], text: null });
+    await app.request("/api/ai/settings", json(ALICE, "PUT", {
+      connections: [{ id: "g1", kind: "gemini", name: "Gemini", apiKey: null }],
+      text: null,
+      image: null,
+    }));
+    const removed = (await (await app.request("/api/ai/settings", as(ALICE))).json()) as { connections: { hasKey: boolean }[] };
+    expect(removed.connections[0]?.hasKey).toBe(false);
+  });
+
+  it("refuses unsafe or invalid setups", async () => {
+    const put = (body: unknown) => app.request("/api/ai/settings", json(BOB, "PUT", body));
+    const metadata = await put({ connections: [{ id: "x", kind: "openai", name: "x", baseUrl: "http://169.254.169.254/v1" }], text: null, image: null });
+    expect(metadata.status).toBe(400);
+    const ftp = await put({ connections: [{ id: "x", kind: "openai", name: "x", baseUrl: "ftp://example.com" }], text: null, image: null });
+    expect(ftp.status).toBe(400);
+    const comfyText = await put({
+      connections: [{ id: "c", kind: "comfyui", name: "Comfy", baseUrl: "https://192.168.0.37:8192" }],
+      text: { connectionId: "c", model: "" },
+      image: null,
+    });
+    expect(comfyText.status).toBe(400);
+    const missing = await put({ connections: [], text: { connectionId: "nope", model: "m" }, image: null });
+    expect(missing.status).toBe(400);
+  });
+
+  it("explains when nothing is set up", async () => {
+    const res = await app.request("/api/ai/text", json(BOB, "POST", { prompt: "hi" }));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/No text model/);
   });
 });

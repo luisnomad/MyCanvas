@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type DesignSummary } from "@mycanvas/shared";
 import { useEditorStore } from "../../store/editorStore";
 import { ContentDialog } from "./ContentDialog";
+import { FormatAiDialog } from "./FormatAiDialog";
 import { FormatFontsDialog } from "./FormatFontsDialog";
 import { useFormatStatus } from "./useFormatStatus";
 
@@ -15,7 +16,7 @@ export function FormatMenu() {
   const setDesignKind = useEditorStore((state) => state.setDesignKind);
   const saveNow = useEditorStore((state) => state.saveNow);
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<"create" | "reflow" | "fonts" | null>(null);
+  const [dialog, setDialog] = useState<"create" | "reflow" | "fonts" | "ai" | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const formatStatus = useFormatStatus(design?.kind === "format" ? undefined : design?.source);
 
@@ -135,6 +136,17 @@ export function FormatMenu() {
                     className="secondary"
                     onClick={() => {
                       setOpen(false);
+                      setDialog("ai");
+                    }}
+                  >
+                    AI instructions…
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="secondary"
+                    onClick={() => {
+                      setOpen(false);
                       setDesignKind(undefined);
                     }}
                   >
@@ -164,6 +176,7 @@ export function FormatMenu() {
         </div>
       )}
       {dialog === "fonts" && <FormatFontsDialog onClose={() => { setDialog(null); }} />}
+      {dialog === "ai" && <FormatAiDialog onClose={() => { setDialog(null); }} />}
       {dialog === "create" && (
         <ContentDialog mode="create" formats={[thisFormat]} initialFormatId={design.id} folderId={design.folderId} onClose={() => { setDialog(null); }} />
       )}
