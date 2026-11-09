@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { type AiImageJob, type AiSettingsInput, AI_IMAGE_NAME_PREFIX } from "@mycanvas/shared";
 import { type Hono } from "hono";
 import { saveAsset } from "../assets-store";
-import { type Identity } from "../auth";
+import { type Identity, knownAccounts } from "../auth";
 import { SecretsUnavailableError } from "../secrets";
-import { type Workspace, readJsonFile } from "../storage";
+import { type Workspace } from "../storage";
+import { checkNetworkAccess, isOwner, readAdminSettings, saveAdminSettings } from "./network";
 import { ProviderError, generateImage, generateText, listModels } from "./providers";
 import { AiSettingsError, readAiSettings, resolveConnection, saveAiSettings } from "./settings";
 
@@ -34,22 +35,23 @@ function failure(error: unknown): { message: string; status: 400 | 500 | 503 } {
   return { message: "Something went wrong talking to the AI provider.", status: 500 };
 }
 
-async function assignment(ws: Workspace, role: "text" | "image") {
-  const settings = await readAiSettings(ws);
+async function assignment(ws: Workspace, email: string, role: "text" | "image") {
+  const settings = await readAiSettings(ws, email);
   const chosen = settings[role];
   if (!chosen) {
     throw new AiSettingsError(role === "text" ? "No text model is set up. Open AI settings to choose one." : "No image model is set up. Open AI settings to choose one.");
   }
-  const { connection, apiKey } = await resolveConnection(ws, chosen.connectionId);
+  const { connection, apiKey } = await resolveConnection(ws, chosen.connectionId, email);
+  await checkNetworkAccess(connection, email);
   return { connection, apiKey, model: chosen.model };
 }
 
 export function registerAiRoutes(app: Hono<AppEnv>): void {
-  app.get("/api/ai/settings", async (c) => c.json(await readAiSettings(c.get("ws"))));
+  app.get("/api/ai/settings", async (c) => c.json(await readAiSettings(c.get("ws"), c.get("identity").email)));
 
   app.put("/api/ai/settings", async (c) => {
     try {
-      return c.json(await saveAiSettings(c.get("ws"), await c.req.json<AiSettingsInput>()));
+      return c.json(await saveAiSettings(c.get("ws"), await c.req.json<AiSettingsInput>(), c.get("identity").email));
     } catch (error) {
       const { message, status } = failure(error);
       return c.json({ error: message }, status);
@@ -60,7 +62,8 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
   app.post("/api/ai/models", async (c) => {
     try {
       const { connectionId } = await c.req.json<{ connectionId: string }>();
-      const { connection, apiKey } = await resolveConnection(c.get("ws"), connectionId);
+      const { connection, apiKey } = await resolveConnection(c.get("ws"), connectionId, c.get("identity").email);
+      await checkNetworkAccess(connection, c.get("identity").email);
       return c.json({ models: await listModels(connection, apiKey) });
     } catch (error) {
       const { message, status } = failure(error);
@@ -74,7 +77,7 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
       if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 200_000) {
         return c.json({ error: "Missing or oversized prompt." }, 400);
       }
-      const { connection, apiKey, model } = await assignment(c.get("ws"), "text");
+      const { connection, apiKey, model } = await assignment(c.get("ws"), c.get("identity").email, "text");
       const text = await generateText(connection, apiKey, model, {
         system: typeof body.system === "string" ? body.system.slice(0, 50_000) : "",
         prompt: body.prompt,
@@ -98,7 +101,7 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
       if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 8000) {
         return c.json({ error: "Missing or oversized prompt." }, 400);
       }
-      resolved = await assignment(ws, "image");
+      resolved = await assignment(ws, c.get("identity").email, "image");
     } catch (error) {
       const { message, status } = failure(error);
       return c.json({ error: message }, status);
@@ -135,9 +138,28 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     return c.json(visible);
   });
 
+  /** Owner only: which accounts may use the server's local network for AI. */
+  app.get("/api/admin/ai", async (c) => {
+    if (!isOwner(c.get("identity").email)) {
+      return c.json({ error: "Only the owner can change this." }, 403);
+    }
+    const settings = await readAdminSettings();
+    const accounts = knownAccounts().filter((email) => !isOwner(email));
+    return c.json({ ...settings, accounts: [...new Set([...accounts, ...settings.aiLocalNetwork])] });
+  });
+
+  app.put("/api/admin/ai", async (c) => {
+    if (!isOwner(c.get("identity").email)) {
+      return c.json({ error: "Only the owner can change this." }, 403);
+    }
+    const body = await c.req.json<{ aiLocalNetwork?: unknown }>();
+    const list = Array.isArray(body.aiLocalNetwork) ? body.aiLocalNetwork.filter((email): email is string => typeof email === "string") : [];
+    return c.json(await saveAdminSettings({ aiLocalNetwork: list }));
+  });
+
   /** Whether text and images are set up, for enabling AI buttons. */
   app.get("/api/ai/status", async (c) => {
-    const settings = await readJsonFile<{ text?: unknown; image?: unknown }>(c.get("ws").aiFile);
-    return c.json({ text: Boolean(settings?.text), image: Boolean(settings?.image) });
+    const settings = await readAiSettings(c.get("ws"), c.get("identity").email);
+    return c.json({ text: settings.text !== null, image: settings.image !== null });
   });
 }

@@ -63,6 +63,10 @@ export interface AiConnection {
   runsIn?: "server" | "browser";
   /** ComfyUI only. */
   workflow?: ComfyWorkflow;
+  /** Owner only: offered (by name only) to accounts allowed on the local network. */
+  shared?: boolean;
+  /** Set by the server: the owner's shared connection, usable but not editable here. */
+  house?: boolean;
   /** Set by the server: a key is stored. */
   hasKey?: boolean;
   /** Set by the server: last 4 characters of the stored key, for recognition. */

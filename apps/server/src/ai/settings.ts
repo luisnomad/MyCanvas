@@ -9,7 +9,10 @@ import {
   DEFAULT_FLUX_KLEIN,
 } from "@mycanvas/shared";
 import { decryptSecret, encryptSecret } from "../secrets";
-import { type Workspace, readJsonFile, writeJsonFile } from "../storage";
+import { AiSettingsError } from "./errors";
+import { LOCAL_USER } from "../auth";
+import { type Workspace, readJsonFile, workspaceFor, writeJsonFile } from "../storage";
+import { isOwner, mayUseLocalNetwork, resolvesToLocalNetwork } from "./network";
 
 /** Encrypted keys by connection id. */
 type StoredSecrets = Record<string, string>;
@@ -17,22 +20,44 @@ type StoredSecrets = Record<string, string>;
 const MAX_CONNECTIONS = 20;
 const MAX_WORKFLOW_BYTES = 256 * 1024;
 
-export class AiSettingsError extends Error {}
+export { AiSettingsError } from "./errors";
 
 function secretContext(ws: Workspace, connectionId: string): string {
   return `ai-key:${ws.key}:${connectionId}`;
 }
 
+/** Ids of the owner's shared connections, as other accounts see them. */
+const HOUSE_PREFIX = "house-";
+
+/**
+ * The owner's shared connections, offered to accounts allowed on the local
+ * network: name and kind only, never the address, key or workflow.
+ */
+async function houseConnections(email: string): Promise<AiConnection[]> {
+  if (isOwner(email) || !(await mayUseLocalNetwork(email))) {
+    return [];
+  }
+  const owner = await workspaceFor(LOCAL_USER);
+  const stored = await readJsonFile<AiSettings>(owner.aiFile);
+  return (stored?.connections ?? [])
+    .filter((connection) => connection.shared === true && connection.runsIn !== "browser")
+    .map((connection) => ({ id: `${HOUSE_PREFIX}${connection.id}`, kind: connection.kind, name: connection.name, house: true }));
+}
+
 /** The workspace's AI setup as the browser may see it: no keys, only hints. */
-export async function readAiSettings(ws: Workspace): Promise<AiSettings> {
+export async function readAiSettings(ws: Workspace, email: string): Promise<AiSettings> {
   const stored = await readJsonFile<AiSettings>(ws.aiFile);
   const secrets = (await readJsonFile<StoredSecrets>(ws.aiSecretsFile)) ?? {};
-  const connections = (stored?.connections ?? []).map((connection) => ({
+  const own = (stored?.connections ?? []).map((connection) => ({
     ...connection,
     hasKey: connection.id in secrets,
     keyHint: connection.id in secrets ? connection.keyHint : undefined,
   }));
-  return { connections, text: stored?.text ?? null, image: stored?.image ?? null };
+  const connections = [...own, ...await houseConnections(email)];
+  // An assignment to a shared connection that's gone (or no longer allowed) reads as off.
+  const available = (value: AiAssignment | null | undefined) =>
+    value && connections.some((connection) => connection.id === value.connectionId) ? value : null;
+  return { connections, text: available(stored?.text), image: available(stored?.image) };
 }
 
 /**
@@ -93,8 +118,8 @@ function cleanWorkflow(value: unknown): ComfyWorkflow {
   };
 }
 
-function cleanConnection(input: AiConnectionInput): AiConnection {
-  if (typeof input.id !== "string" || !/^[a-z0-9-]{1,40}$/.test(input.id)) {
+function cleanConnection(input: AiConnectionInput, owner: boolean): AiConnection {
+  if (typeof input.id !== "string" || !/^[a-z0-9-]{1,40}$/.test(input.id) || input.id.startsWith(HOUSE_PREFIX)) {
     throw new AiSettingsError("Invalid connection id.");
   }
   if (!AI_CONNECTION_KINDS.some((kind) => kind.id === input.kind)) {
@@ -111,6 +136,9 @@ function cleanConnection(input: AiConnectionInput): AiConnection {
   }
   if (input.kind === "comfyui") {
     connection.workflow = cleanWorkflow(input.workflow);
+  }
+  if (owner && input.shared === true && connection.runsIn !== "browser") {
+    connection.shared = true;
   }
   return connection;
 }
@@ -137,16 +165,26 @@ function cleanAssignment(value: AiAssignment | null, connections: AiConnection[]
  * Saves the AI setup. A connection's `apiKey` replaces its stored key
  * (null removes it, absent keeps it); keys of removed connections go too.
  */
-export async function saveAiSettings(ws: Workspace, input: AiSettingsInput): Promise<AiSettings> {
+export async function saveAiSettings(ws: Workspace, input: AiSettingsInput, email: string): Promise<AiSettings> {
   if (!Array.isArray(input.connections) || input.connections.length > MAX_CONNECTIONS) {
     throw new AiSettingsError("Too many connections.");
   }
+  const owner = isOwner(email);
+  const mayUseLocal = await mayUseLocalNetwork(email);
+  const house = await houseConnections(email);
   const previous = await readJsonFile<AiSettings>(ws.aiFile);
   const secrets = (await readJsonFile<StoredSecrets>(ws.aiSecretsFile)) ?? {};
   const connections: AiConnection[] = [];
   const nextSecrets: StoredSecrets = {};
   for (const raw of input.connections) {
-    const connection = cleanConnection(raw);
+    // Shared connections belong to the owner; they come back from readAiSettings.
+    if (raw.house === true || (typeof raw.id === "string" && raw.id.startsWith(HOUSE_PREFIX))) {
+      continue;
+    }
+    const connection = cleanConnection(raw, owner);
+    if (!mayUseLocal && connection.runsIn !== "browser" && connection.baseUrl && await resolvesToLocalNetwork(connection.baseUrl)) {
+      throw new AiSettingsError(`${connection.name}: that address isn't reachable from the server. For a tool on your own computer, set it to run on "This computer".`);
+    }
     if (connections.some((entry) => entry.id === connection.id)) {
       throw new AiSettingsError("Duplicate connection id.");
     }
@@ -171,16 +209,30 @@ export async function saveAiSettings(ws: Workspace, input: AiSettingsInput): Pro
   }
   const settings: AiSettings = {
     connections,
-    text: cleanAssignment(input.text, connections, "text"),
-    image: cleanAssignment(input.image, connections, "image"),
+    text: cleanAssignment(input.text, [...connections, ...house], "text"),
+    image: cleanAssignment(input.image, [...connections, ...house], "image"),
   };
   await writeJsonFile(ws.aiSecretsFile, nextSecrets);
   await writeJsonFile(ws.aiFile, settings);
-  return readAiSettings(ws);
+  return readAiSettings(ws, email);
 }
 
 /** A connection plus its decrypted key, for server-side calls only. */
-export async function resolveConnection(ws: Workspace, connectionId: string): Promise<{ connection: AiConnection; apiKey?: string }> {
+export async function resolveConnection(ws: Workspace, connectionId: string, email: string): Promise<{ connection: AiConnection; apiKey?: string }> {
+  if (connectionId.startsWith(HOUSE_PREFIX)) {
+    // The owner's shared connection, read from the owner's own workspace.
+    if (isOwner(email) || !(await mayUseLocalNetwork(email))) {
+      throw new AiSettingsError("That connection doesn't exist.");
+    }
+    const owner = await workspaceFor(LOCAL_USER);
+    const id = connectionId.slice(HOUSE_PREFIX.length);
+    const shared = (await readJsonFile<AiSettings>(owner.aiFile))?.connections.find((entry) => entry.id === id && entry.shared === true);
+    if (!shared) {
+      throw new AiSettingsError("That shared connection isn't available any more.");
+    }
+    const sealed = (await readJsonFile<StoredSecrets>(owner.aiSecretsFile))?.[id];
+    return { connection: shared, apiKey: sealed ? await decryptSecret(sealed, secretContext(owner, id)) : undefined };
+  }
   const settings = await readJsonFile<AiSettings>(ws.aiFile);
   const connection = settings?.connections.find((entry) => entry.id === connectionId);
   if (!connection) {

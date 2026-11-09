@@ -20,6 +20,7 @@ import {
   normalizeDesign,
 } from "@mycanvas/shared";
 
+import { isOwner } from "./ai/network";
 import { registerAiRoutes } from "./ai/routes";
 import { assetUsageIndex } from "./asset-usage";
 import { readAssetManifest, saveAsset } from "./assets-store";
@@ -165,6 +166,7 @@ app.get("/api/me", (c) => {
     via: identity.via,
     // Cloudflare Access ends the session at this path on the app's host.
     logoutUrl: identity.via === "access" ? "/cdn-cgi/access/logout" : null,
+    isOwner: isOwner(identity.email),
   });
 });
 

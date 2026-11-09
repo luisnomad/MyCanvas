@@ -76,6 +76,15 @@ export interface Me {
   via: "access" | "local";
   /** Ends the Cloudflare Access session; null for the local (LAN) route. */
   logoutUrl: string | null;
+  /** The installation's owner (admin settings). */
+  isOwner?: boolean;
+}
+
+export interface AdminAiSettings {
+  /** Accounts allowed to use AI tools on the server's local network. */
+  aiLocalNetwork: string[];
+  /** Accounts that can sign in (to choose from). */
+  accounts: string[];
 }
 
 export const api = {
@@ -119,6 +128,8 @@ export const api = {
   saveAiSettings: (input: AiSettingsInput) => request<AiSettings>("/api/ai/settings", jsonInit("PUT", input)),
   /** Also tests the connection: rejects with the provider's message when it can't connect. */
   aiModels: (connectionId: string) => request<{ models: AiModelInfo[] }>("/api/ai/models", jsonInit("POST", { connectionId })),
+  adminAi: () => request<AdminAiSettings>("/api/admin/ai"),
+  saveAdminAi: (aiLocalNetwork: string[]) => request<Pick<AdminAiSettings, "aiLocalNetwork">>("/api/admin/ai", jsonInit("PUT", { aiLocalNetwork })),
   aiStatus: () => request<{ text: boolean; image: boolean }>("/api/ai/status"),
   aiText: (input: { system: string; prompt: string; json?: boolean; temperature?: number }) =>
     request<{ text: string; model: string; connection: string }>("/api/ai/text", jsonInit("POST", input)),

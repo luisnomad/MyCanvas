@@ -21,6 +21,11 @@ const ALLOWED_EMAILS = new Set(
 );
 const CERTS_TTL_MS = 60 * 60 * 1000;
 
+/** Accounts allowed in through Cloudflare Access (MYCANVAS_ALLOWED_EMAILS). */
+export function knownAccounts(): string[] {
+  return [...ALLOWED_EMAILS];
+}
+
 export interface Identity {
   email: string;
   via: "access" | "local";

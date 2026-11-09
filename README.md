@@ -96,6 +96,10 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   server's network; keys stored encrypted with `MYCANVAS_SECRET_KEY`, never
   sent back to the browser) or on "this computer" (the browser talks to
   Ollama/LM Studio/ComfyUI at localhost; any key stays in that browser).
+- The owner decides which accounts may use the server's local network
+  (e.g. a GPU machine at home) and can share connections with them: they
+  see the name only, never the address, key or workflow. Other accounts
+  don't see those machines at all; a local address they type is refused.
 - Formats carry AI instructions: content rules and an illustration style.
 - "Tidy with AI" restructures content (callouts, leads, headings, broken
   lines) without changing the words, and reports any word that changed.

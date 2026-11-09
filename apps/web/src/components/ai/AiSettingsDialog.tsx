@@ -10,6 +10,7 @@ import {
   DEFAULT_FLUX_KLEIN,
 } from "@mycanvas/shared";
 import { api } from "../../api";
+import { AdminAiSection } from "./AdminAiSection";
 import { browserKey, invalidateAiSettings, listAiModels, setBrowserKey } from "../../utils/ai-client";
 
 /** Draft of the settings being edited (connections may carry a new key). */
@@ -46,7 +47,9 @@ function ConnectionEditor({
   onRemove,
   onTest,
   test,
+  isOwner,
 }: {
+  isOwner: boolean;
   connection: AiConnectionInput;
   onChange: (next: AiConnectionInput) => void;
   onRemove: () => void;
@@ -59,6 +62,23 @@ function ConnectionEditor({
   const hasKey = browser ? Boolean(localKey) : connection.hasKey === true;
   const keyHint = browser ? (localKey ?? "").slice(-4) : connection.keyHint ?? "····";
   const keyLabel = connection.kind === "gemini" ? "API key" : "API key (if the server needs one)";
+  if (connection.house) {
+    return (
+      <div className="ai-connection ai-connection-house">
+        <div className="ai-connection-head">
+          <span className="ai-kind-tag">{kindLabel(connection.kind)}</span>
+          <strong className="ai-connection-name">{connection.name}</strong>
+          <button type="button" className="secondary" onClick={onTest} title="Check the connection and list its models">Test</button>
+        </div>
+        <p className="muted ai-role-hint">Shared by the owner. Choose it above for text or images; its details stay private.</p>
+        {test && (
+          <p className={test.state === "error" ? "form-error ai-test" : "muted ai-test"} role="status">
+            {test.state === "loading" ? "Checking…" : test.state === "error" ? test.message : `Connected · ${String(test.models.length)} ${test.models.length === 1 ? "model" : "models"} found`}
+          </p>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="ai-connection">
       <div className="ai-connection-head">
@@ -149,6 +169,16 @@ function ConnectionEditor({
             onChange={(e) => { onChange({ ...connection, allowSelfSigned: e.target.checked }); }}
           />
           Accept a self-signed certificate (your own server on the local network)
+        </label>
+      )}
+      {isOwner && connection.kind !== "gemini" && !browser && (
+        <label className="ai-check">
+          <input
+            type="checkbox"
+            checked={connection.shared === true}
+            onChange={(e) => { onChange({ ...connection, shared: e.target.checked }); }}
+          />
+          Share with the accounts you allow below (they see its name only)
         </label>
       )}
       {connection.kind === "comfyui" && (
@@ -326,6 +356,11 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const [saved, setSaved] = useState(false);
   const [models, setModels] = useState<Record<string, ModelState>>({});
   const [adding, setAdding] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
+
+  useEffect(() => {
+    void api.me().then((me) => { setIsOwner(me.isOwner === true); }).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     void api.aiSettings().then((settings) => { setDraft(toDraft(settings)); }).catch((reason: unknown) => {
@@ -433,6 +468,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
         {draft.connections.map((connection, index) => (
           <ConnectionEditor
             key={connection.id}
+            isOwner={isOwner}
             connection={connection}
             test={models[connection.id]}
             onChange={(next) => {
@@ -471,6 +507,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
               <button type="button" className="secondary" onClick={() => { setAdding(true); }}>+ Add connection</button>
             )}
 
+        <AdminAiSection />
         {error && <p className="form-error">{error}</p>}
         <div className="dialog-actions">
           {saved && <span className="muted ai-saved">Saved</span>}

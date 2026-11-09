@@ -363,3 +363,72 @@ describe("AI settings", () => {
     expect(((await res.json()) as { error: string }).error).toMatch(/No text model/);
   });
 });
+
+describe("AI on the server's local network", () => {
+  const json = (email: string | null, method: string, body: unknown, route: "public" | null = "public"): RequestInit =>
+    as(email, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, route);
+  const lanSetup = {
+    connections: [{ id: "lan", kind: "openai", name: "GPU box", baseUrl: "http://192.168.0.37:11439/v1" }],
+    text: { connectionId: "lan", model: "gemma" },
+    image: null,
+  };
+
+  it("lets only the owner see and change who may use it", async () => {
+    expect((await app.request("/api/admin/ai", as(ALICE))).status).toBe(403);
+    expect((await app.request("/api/admin/ai", json(ALICE, "PUT", { aiLocalNetwork: [ALICE] }))).status).toBe(403);
+    const owner = await app.request("/api/admin/ai", as(null, {}, null));
+    expect(owner.status).toBe(200);
+    expect(((await owner.json()) as { accounts: string[] }).accounts).toEqual(expect.arrayContaining([ALICE, BOB]));
+    const me = (await (await app.request("/api/me", as(null, {}, null))).json()) as { isOwner: boolean };
+    expect(me.isOwner).toBe(true);
+  });
+
+  it("refuses local-network addresses for accounts the owner hasn't allowed, without saying what's there", async () => {
+    const res = await app.request("/api/ai/settings", json(BOB, "PUT", lanSetup));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/isn't reachable from the server/);
+    // The same address is fine as a tool on the person's own computer.
+    const local = await app.request("/api/ai/settings", json(BOB, "PUT", {
+      ...lanSetup,
+      connections: [{ ...lanSetup.connections[0], runsIn: "browser" }],
+    }));
+    expect(local.status).toBe(200);
+  });
+
+  it("offers the owner's shared connections, by name only, to allowed accounts", async () => {
+    const ownerSetup = {
+      connections: [
+        { id: "gpu", kind: "openai", name: "Atom · Gemma 4", baseUrl: "http://192.168.0.37:11439/v1", shared: true },
+        { id: "private", kind: "openai", name: "Owner only", baseUrl: "http://192.168.0.38:1/v1" },
+      ],
+      text: { connectionId: "gpu", model: "gemma" },
+      image: null,
+    };
+    expect((await app.request("/api/ai/settings", json(null, "PUT", ownerSetup, null))).status).toBe(200);
+    await app.request("/api/admin/ai", json(null, "PUT", { aiLocalNetwork: [ALICE] }, null));
+
+    const alice = await (await app.request("/api/ai/settings", as(ALICE))).text();
+    expect(alice).toContain("Atom · Gemma 4");
+    expect(alice).not.toContain("192.168.0.37");
+    expect(alice).not.toContain("Owner only");
+    const saved = await app.request("/api/ai/settings", json(ALICE, "PUT", { connections: [], text: { connectionId: "house-gpu", model: "gemma" }, image: null }));
+    expect(saved.status).toBe(200);
+    expect(((await saved.json()) as { text: { connectionId: string } | null }).text?.connectionId).toBe("house-gpu");
+
+    const bob = await (await app.request("/api/ai/settings", as(BOB))).text();
+    expect(bob).not.toContain("Atom");
+    const sneaky = await app.request("/api/ai/settings", json(BOB, "PUT", { connections: [], text: { connectionId: "house-gpu", model: "gemma" }, image: null }));
+    expect(sneaky.status).toBe(400);
+    await app.request("/api/admin/ai", json(null, "PUT", { aiLocalNetwork: [] }, null));
+  });
+
+  it("recognises local addresses", async () => {
+    const { isLocalAddress } = await import("./ai/network");
+    for (const address of ["192.168.0.37", "10.1.2.3", "172.20.0.1", "127.0.0.1", "100.101.1.1", "::1", "fd12::1", "::ffff:192.168.1.1"]) {
+      expect(isLocalAddress(address)).toBe(true);
+    }
+    for (const address of ["8.8.8.8", "172.32.0.1", "142.250.1.1", "2a00:1450::1"]) {
+      expect(isLocalAddress(address)).toBe(false);
+    }
+  });
+});

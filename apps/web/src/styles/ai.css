@@ -200,3 +200,8 @@
   font-size: 12px;
   line-height: 1.45;
 }
+
+.ai-connection-house {
+  background: var(--surface-inner);
+  border-style: dashed;
+}
