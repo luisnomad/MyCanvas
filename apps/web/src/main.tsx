@@ -4,6 +4,7 @@ import App from "./App";
 import "./styles/app.css";
 import "./styles/editor.css";
 import "./styles/uploads.css";
+import "./styles/formats.css";
 
 const container = document.getElementById("root");
 if (!container) {

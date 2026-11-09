@@ -6,6 +6,7 @@ import { FolderBar } from "../components/folders/FolderBar";
 import { MoveToFolder } from "../components/folders/MoveToFolder";
 import { TemplateGallery } from "../components/TemplateGallery";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { ContentDialog } from "../components/formats/ContentDialog";
 import { UploadsManager } from "../components/uploads/UploadsManager";
 import { UserBadge } from "../components/UserBadge";
 import { ALL_DESIGNS, DESIGN_DRAG_MIME, type FolderView, folderViewHash, inView } from "../utils/folders";
@@ -45,6 +46,7 @@ export function ProjectList({ view }: { view: FolderView }) {
   const [error, setError] = useState<string | null>(null);
   const [showUploads, setShowUploads] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [showNewDocument, setShowNewDocument] = useState(false);
   const [newName, setNewName] = useState("");
   const [presetId, setPresetId] = useState(ASPECT_RATIOS[0]?.id ?? "16:9");
   const [customWidth, setCustomWidth] = useState("1280");
@@ -96,6 +98,7 @@ export function ProjectList({ view }: { view: FolderView }) {
   }, [view, folders, currentFolder]);
   /** New designs land in the folder being viewed. */
   const targetFolderId = currentFolder?.id;
+  const formats = (designs ?? []).filter((design) => design.kind === "format");
 
   const size = resolveSize(presetId, customWidth, customHeight);
 
@@ -249,15 +252,29 @@ export function ProjectList({ view }: { view: FolderView }) {
 
       <div className="list-hero">
         <h1>What will you design today?</h1>
-        <button
-          type="button"
-          className="primary hero-cta"
-          onClick={() => {
-            setShowNew(true);
-          }}
-        >
-          New design
-        </button>
+        <div className="hero-actions">
+          <button
+            type="button"
+            className="primary hero-cta"
+            onClick={() => {
+              setShowNew(true);
+            }}
+          >
+            New design
+          </button>
+          {formats.length > 0 && (
+            <button
+              type="button"
+              className="secondary hero-cta"
+              title="Write or paste content and lay it out with one of your formats"
+              onClick={() => {
+                setShowNewDocument(true);
+              }}
+            >
+              New document
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="list-content">
@@ -349,7 +366,13 @@ export function ProjectList({ view }: { view: FolderView }) {
                     )}
               </div>
               <div className="design-meta">
-                <strong>{design.name}</strong>
+                <strong>
+                  {design.name}
+                  {design.kind === "format" && <span className="design-tag" title="A document format: its pages are masters">Format</span>}
+                </strong>
+                {design.sourceFormat !== undefined && design.kind !== "format" && (
+                  <span className="muted design-source">{`Document · ${design.sourceFormat}`}</span>
+                )}
                 <span className="muted">
                   {`${String(design.width)} × ${String(design.height)}${design.pageCount > 1 ? ` · ${String(design.pageCount)} pages` : ""} · ${relativeEditedTime(design.updatedAt)}`}
                 </span>
@@ -521,6 +544,16 @@ export function ProjectList({ view }: { view: FolderView }) {
             </div>
           </div>
         </div>
+      )}
+      {showNewDocument && (
+        <ContentDialog
+          mode="create"
+          formats={formats}
+          folderId={targetFolderId}
+          onClose={() => {
+            setShowNewDocument(false);
+          }}
+        />
       )}
       {showUploads && (
         <UploadsManager

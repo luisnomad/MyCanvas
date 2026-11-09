@@ -12,6 +12,7 @@ import { ShortcutsDialog } from "../components/ShortcutsDialog";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { UserBadge } from "../components/UserBadge";
 import { ViewMenu } from "../components/ViewMenu";
+import { FormatMenu } from "../components/formats/FormatMenu";
 import { PageNav } from "../components/pages/PageNav";
 import { PagesStrip } from "../components/pages/PagesStrip";
 import { useEditorStore } from "../store/editorStore";
@@ -327,6 +328,7 @@ export function Editor({ designId }: { designId: string }) {
         </span>
         <span className="top-bar-spacer" />
         <ThemeToggle />
+        <FormatMenu />
         <SaveTemplateButton />
         <button
           type="button"

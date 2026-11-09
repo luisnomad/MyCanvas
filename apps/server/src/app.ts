@@ -8,7 +8,9 @@ import path from "node:path";
 import {
   type AssetInfo,
   type Design,
+  type DesignPage,
   type DesignSummary,
+  type DocumentSource,
   type Folder,
   type StoredDesign,
   type TemplateSummary,
@@ -66,8 +68,28 @@ function toSummary(design: Design): DesignSummary {
     pageCount: design.pages.length,
     thumbnail: design.thumbnail,
     folderId: design.folderId,
+    kind: design.kind,
+    sourceFormat: design.source?.formatName,
     createdAt: design.createdAt,
     updatedAt: design.updatedAt,
+  };
+}
+
+function isPageLike(page: unknown): page is DesignPage {
+  const candidate = page as Partial<DesignPage> | null;
+  return typeof candidate?.id === "string" && typeof candidate.background === "string" && Array.isArray(candidate.layers);
+}
+
+function cleanSource(source: unknown): DocumentSource | undefined {
+  const candidate = source as Partial<DocumentSource> | null | undefined;
+  if (typeof candidate?.formatId !== "string" || typeof candidate.markdown !== "string") {
+    return undefined;
+  }
+  return {
+    formatId: candidate.formatId,
+    formatName: typeof candidate.formatName === "string" ? candidate.formatName : "",
+    markdown: candidate.markdown,
+    generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : new Date().toISOString(),
   };
 }
 
@@ -175,6 +197,9 @@ app.post("/api/designs", async (c) => {
     background?: string;
     templateId?: string;
     folderId?: string;
+    /** Ready-made pages, e.g. a document generated from a format. */
+    pages?: DesignPage[];
+    source?: DocumentSource;
   }>();
   const folderId = await existingFolderId(ws, body.folderId);
   if (body.templateId !== undefined) {
@@ -201,6 +226,11 @@ app.post("/api/designs", async (c) => {
   if (width <= 0 || height <= 0 || width > 8192 || height > 8192) {
     return c.json({ error: "Invalid canvas size" }, 400);
   }
+  const pages = Array.isArray(body.pages) && body.pages.length > 0 ? body.pages : null;
+  if (pages && !pages.every(isPageLike)) {
+    return c.json({ error: "Invalid pages" }, 400);
+  }
+  const source = cleanSource(body.source);
   const now = new Date().toISOString();
   const trimmedName = body.name?.trim();
   const design: Design = {
@@ -208,8 +238,9 @@ app.post("/api/designs", async (c) => {
     name: trimmedName === undefined || trimmedName === "" ? "Untitled design" : trimmedName,
     width,
     height,
-    pages: [{ id: newId(), background: body.background ?? "#ffffff", layers: [] }],
+    pages: pages ?? [{ id: newId(), background: body.background ?? "#ffffff", layers: [] }],
     folderId,
+    ...(source ? { source } : {}),
     createdAt: now,
     updatedAt: now,
   };
@@ -244,6 +275,22 @@ app.put("/api/designs/:id", async (c) => {
     pages: Array.isArray(body.pages) && body.pages.length > 0 ? body.pages : existing.pages,
     updatedAt: new Date().toISOString(),
   };
+  // Optional fields: present in the body = set (null clears), absent = keep.
+  if ("kind" in body) {
+    if (body.kind === "format") {
+      design.kind = "format";
+    } else {
+      delete design.kind;
+    }
+  }
+  if ("source" in body) {
+    const source = cleanSource(body.source);
+    if (source) {
+      design.source = source;
+    } else {
+      delete design.source;
+    }
+  }
   await writeJsonFile(designFile(ws, design.id), design);
   return c.json(design);
 });

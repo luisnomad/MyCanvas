@@ -1,4 +1,4 @@
-import { type AssetInfo, type Design, type DesignSummary, type Folder, type TemplateSummary } from "@mycanvas/shared";
+import { type AssetInfo, type Design, type DesignPage, type DesignSummary, type DocumentSource, type Folder, type TemplateSummary } from "@mycanvas/shared";
 
 export class ApiError extends Error {
   status: number;
@@ -51,7 +51,13 @@ export interface CreateDesignInput {
   templateId?: string;
   /** File the new design in this folder. */
   folderId?: string;
+  /** Ready-made pages (a document generated from a format). */
+  pages?: DesignPage[];
+  source?: DocumentSource;
 }
+
+/** An editor save; `kind: null` turns a format back into a plain design. */
+export type DesignUpdate = Omit<Design, "kind"> & { kind: "format" | null };
 
 export interface Me {
   email: string;
@@ -65,7 +71,7 @@ export const api = {
   listDesigns: () => request<DesignSummary[]>("/api/designs"),
   createDesign: (input: CreateDesignInput) => request<Design>("/api/designs", jsonInit("POST", input)),
   getDesign: (id: string) => request<Design>(`/api/designs/${encodeURIComponent(id)}`),
-  updateDesign: (id: string, design: Design) =>
+  updateDesign: (id: string, design: DesignUpdate) =>
     request<Design>(`/api/designs/${encodeURIComponent(id)}`, jsonInit("PUT", design)),
   deleteDesign: (id: string) =>
     request<{ ok: boolean }>(`/api/designs/${encodeURIComponent(id)}`, { method: "DELETE" }),

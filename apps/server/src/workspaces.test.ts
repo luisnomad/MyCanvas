@@ -248,6 +248,38 @@ describe("multi-page designs", () => {
   });
 });
 
+describe("document formats", () => {
+  const json = (email: string, method: string, body: unknown): RequestInit =>
+    as(email, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const list = async (email: string) =>
+    (await (await app.request("/api/designs", as(email))).json()) as { id: string; kind?: string; sourceFormat?: string; pageCount: number }[];
+
+  it("marks a design as a format and back, and keeps the mark across editor saves", async () => {
+    const { id } = (await (await app.request("/api/designs", json(BOB, "POST", { name: "Look" }))).json()) as { id: string };
+    await app.request(`/api/designs/${id}`, json(BOB, "PUT", { kind: "format" }));
+    // An editor save that doesn't mention the kind leaves it alone.
+    await app.request(`/api/designs/${id}`, json(BOB, "PUT", { name: "Look v2" }));
+    expect((await list(BOB)).find((entry) => entry.id === id)?.kind).toBe("format");
+    await app.request(`/api/designs/${id}`, json(BOB, "PUT", { kind: null }));
+    expect((await list(BOB)).find((entry) => entry.id === id)?.kind).toBeUndefined();
+  });
+
+  it("creates a document from ready-made pages and remembers its source", async () => {
+    const source = { formatId: "f1", formatName: "Blue", markdown: "# Hi", generatedAt: "2026-11-09T00:00:00.000Z" };
+    const pages = [{ id: "a", background: "#00f", layers: [] }, { id: "b", background: "#00f", layers: [] }];
+    const res = await app.request("/api/designs", json(BOB, "POST", { name: "Doc", width: 794, height: 1123, pages, source }));
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()) as { id: string };
+    const summary = (await list(BOB)).find((entry) => entry.id === id);
+    expect(summary).toMatchObject({ pageCount: 2, sourceFormat: "Blue" });
+    const saved = (await (await app.request(`/api/designs/${id}`, as(BOB))).json()) as { source: unknown };
+    expect(saved.source).toEqual(source);
+    // Malformed pages are refused.
+    const bad = await app.request("/api/designs", json(BOB, "POST", { pages: [{ id: "x" }] }));
+    expect(bad.status).toBe(400);
+  });
+});
+
 describe("legacy data migration", () => {
   it("moves pre-workspace data into the owner's workspace once", async () => {
     const legacyDir = await mkdtemp(path.join(tmpdir(), "mycanvas-legacy-"));

@@ -5,6 +5,7 @@ import { AiToolsSection } from "./inspector/AiToolsSection";
 import { ArrangeSection } from "./inspector/ArrangeSection";
 import { BehindTextSection } from "./inspector/BehindTextSection";
 import { ShadowPanel, StrokePanel } from "./inspector/EffectPanels";
+import { FormatRoleSection } from "./inspector/FormatRoleSection";
 import { FrameSection } from "./inspector/FrameSection";
 import { ImageSection } from "./inspector/ImageSection";
 import { PositionSection } from "./inspector/PositionSection";
@@ -63,6 +64,7 @@ export function Inspector() {
         </div>
       )}
       <div className={layer.locked ? "inspector-panels locked" : "inspector-panels"} key={layer.id}>
+        {design?.kind === "format" && <FormatRoleSection layer={layer} patch={patch} commit={commitTransient} />}
         <PositionSection layer={layer} patch={patch} commit={commitTransient} />
         {layer.type === "image" && (
           <>

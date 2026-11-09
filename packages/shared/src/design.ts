@@ -29,7 +29,38 @@ interface LayerBase {
   /** Locked layers: selectable but frozen — no transform/drag/nudge/delete/
    *  z-order/property edits, and marquee selection skips them. */
   locked?: boolean;
+  /** Only meaningful inside a document format (see FormatRole). */
+  formatRole?: FormatRole;
 }
+
+/** Content block kinds a document format can style. */
+export type BlockKind = "title" | "lead" | "heading" | "body" | "callout" | "image";
+
+export const BLOCK_KINDS: { id: BlockKind; label: string }[] = [
+  { id: "title", label: "Title" },
+  { id: "lead", label: "Lead" },
+  { id: "heading", label: "Heading" },
+  { id: "body", label: "Body text" },
+  { id: "callout", label: "Callout" },
+  { id: "image", label: "Image" },
+];
+
+/**
+ * What a layer does in a document format. Layers without a role are
+ * decoration and repeat on every page made from their master page.
+ * - flow: a rectangle marking where content flows on that master.
+ * - sample: shows how one block kind looks (text, or image for "image");
+ *   its position inside the flow area sets the block's indent.
+ * - box: a rectangle drawn around a sample; every block of that kind gets
+ *   a box with the same padding.
+ * - hideOnLast: decoration left off the document's final page (e.g. a
+ *   "next page" arrow).
+ */
+export type FormatRole =
+  | { kind: "flow" }
+  | { kind: "sample"; block: BlockKind; /** Gap above the block, px. */ spaceBefore: number }
+  | { kind: "box"; block: BlockKind }
+  | { kind: "hideOnLast" };
 
 /** Mutually-exclusive text effects (Canva model: one effect or none). */
 export type TextEffect =
@@ -234,8 +265,21 @@ export interface Design {
   /** Project folder (e.g. a customer); absent = unfiled. Changed only through
    *  the move endpoint, never by editor saves. */
   folderId?: string;
+  /** "format": a document format whose pages are masters (see FormatRole). */
+  kind?: "format";
+  /** Set on documents made from a format, so the content can be re-flowed. */
+  source?: DocumentSource;
   createdAt: string;
   updatedAt: string;
+}
+
+/** The content and format a generated document was made from. */
+export interface DocumentSource {
+  formatId: string;
+  formatName: string;
+  /** The content, in the format's simple Markdown dialect. */
+  markdown: string;
+  generatedAt: string;
 }
 
 /** A design as stored on disk: older files keep one page's content inline. */
@@ -279,6 +323,9 @@ export interface DesignSummary {
   id: string;
   name: string;
   folderId?: string;
+  kind?: "format";
+  /** Name of the format a generated document came from. */
+  sourceFormat?: string;
   width: number;
   height: number;
   pageCount: number;

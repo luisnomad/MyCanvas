@@ -536,7 +536,8 @@ input.color-hex:focus {
 .design-thumb img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* Whole design visible: tall pages sit centred instead of being cropped. */
+  object-fit: contain;
   display: block;
 }
 

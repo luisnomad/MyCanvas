@@ -4,13 +4,16 @@ export { GENERATED_ASSET_NAMES } from "./assets";
 export { ASPECT_RATIOS } from "./aspect-ratios";
 export type {
   BehindText,
+  BlockKind,
   Design,
   DesignPage,
   DesignSummary,
+  DocumentSource,
   Folder,
   FrameContent,
   FrameLayer,
   FrameShape,
+  FormatRole,
   GradientFill,
   ImageAdjustments,
   ImageCrop,
@@ -29,7 +32,7 @@ export type {
   TextEffect,
   TextLayer,
 } from "./design";
-export { allLayers, defaultShadow, defaultStroke, defaultTextEffect, normalizeDesign } from "./design";
+export { BLOCK_KINDS, allLayers, defaultShadow, defaultStroke, defaultTextEffect, normalizeDesign } from "./design";
 export type { GoogleFont } from "./google-fonts";
 export { GOOGLE_FONTS } from "./google-fonts";
 export type { SizePreset, TemplateSummary } from "./templates";

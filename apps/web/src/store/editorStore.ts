@@ -1,6 +1,7 @@
 import {
   type Design,
   type DesignPage,
+  type DocumentSource,
   type FrameLayer,
   type GradientFill,
   type ImageLayer,
@@ -13,7 +14,7 @@ import {
   normalizeDesign,
 } from "@mycanvas/shared";
 import { create } from "zustand";
-import { ApiError, api } from "../api";
+import { ApiError, type DesignUpdate, api } from "../api";
 import { makeDesignThumbnail } from "../utils/canvas-bridge";
 import { ensureFontsLoaded } from "../utils/fonts";
 
@@ -177,6 +178,10 @@ export interface EditorStore {
   deletePage: (pageId: string) => void;
   /** Moves a page to a new position (0-based). */
   movePage: (pageId: string, toIndex: number) => void;
+  /** Marks the design as a document format (or back to a plain design). */
+  setDesignKind: (kind: "format" | undefined) => void;
+  /** Replaces every page (one undo step), e.g. after re-flowing content. */
+  replacePages: (pages: DesignPage[], source?: DocumentSource) => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -245,7 +250,7 @@ function migrateTextEffect(layer: Layer): Layer {
 }
 
 /** A copy of a page's content with fresh layer and group ids. */
-function clonePageContent(page: PageContent): PageContent {
+export function clonePageContent(page: PageContent): PageContent {
   const groupIds = new Map<string, string>();
   return {
     background: page.background,
@@ -387,7 +392,20 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
           .flatMap((page) => page.layers)
           .filter((layer): layer is TextLayer => layer.type === "text")
           .map((layer) => layer.fontFamily);
-        void ensureFontsLoaded(families);
+        void ensureFontsLoaded(families).then(() => {
+          // Designs made outside the editor (e.g. generated documents) have
+          // no previews yet: once page 1 has had time to draw its images,
+          // save it so the project list shows the cover.
+          if (design.pages[0]?.thumbnail) {
+            return;
+          }
+          setTimeout(() => {
+            const state = get();
+            if (state.design?.id === id && state.activePageId === firstPageId && !state.design.pages[0]?.thumbnail) {
+              markDirty();
+            }
+          }, 1500);
+        });
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
           set({ loadStatus: "not-found" });
@@ -961,10 +979,14 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         const pages = syncedPages(design, activePageId).map((page) =>
           page.id === activePageId && thumbnail ? { ...page, thumbnail } : page);
         const { layers: _layers, background: _background, backgroundGradient: _gradient, ...meta } = design;
-        const payload: Design = {
+        const payload: DesignUpdate = {
           ...meta,
           pages,
-          thumbnail: pages[0]?.thumbnail ?? design.thumbnail,
+          // The project list shows page 1; without its preview the server
+          // keeps whatever it has.
+          thumbnail: pages[0]?.thumbnail,
+          // Explicit null so turning "format" off reaches the server.
+          kind: design.kind ?? null,
         };
         const saved = await api.updateDesign(design.id, payload);
         const current = get().design;
@@ -975,7 +997,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
                 design: {
                   ...current,
                   updatedAt: saved.updatedAt,
-                  thumbnail: payload.thumbnail,
+                  thumbnail: payload.thumbnail ?? current.thumbnail,
                   // Keep the new preview without touching newer edits.
                   pages: current.pages.map((page) =>
                     page.id === activePageId && thumbnail ? { ...page, thumbnail } : page),
@@ -1049,6 +1071,27 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         const rest = pages.filter((entry) => entry.id !== pageId);
         return { pages: [...rest.slice(0, to), page, ...rest.slice(to)], activePageId };
       });
+    },
+
+    setDesignKind: (kind) => {
+      const design = get().design;
+      if (!design || design.kind === kind) {
+        return;
+      }
+      set({ design: { ...design, kind } });
+      markDirty();
+    },
+
+    replacePages: (pages, source) => {
+      const first = pages[0];
+      if (!first) {
+        return;
+      }
+      changePages(() => ({ pages, activePageId: first.id }));
+      const design = get().design;
+      if (design && source) {
+        set({ design: { ...design, source } });
+      }
     },
   };
 });

@@ -109,6 +109,23 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   the editor; images, shapes and styled/curved text are embedded as
   high-resolution slices in the right stacking order.
 
+**Document formats**
+
+- Any design can become a format (top bar → Format). Its pages are masters:
+  page 1 for a document's first page, page 2 for the pages after it.
+- In a format, the inspector's "Role in format" panel marks layers: a **flow
+  area** rectangle where content goes, a **sample** text for each block kind
+  (title, lead, heading, body, callout) or an image, a **box** drawn behind a
+  sample (e.g. a callout strip), and decorations that skip the last page (e.g.
+  a "next page" arrow). Everything else repeats on every page.
+- "New document" writes or pastes content in a small Markdown dialect (`#`
+  title, `**…**` lead, `##` heading, `>` callout, `![name](upload)` image,
+  `---` new page) and lays it out: blocks stack in the flow area and continue
+  on new pages; long paragraphs split across pages, and a heading never ends
+  a page.
+- Documents stay normal designs: edit anything by hand. "Edit content"
+  re-flows the text with the format's latest version (one undo step).
+
 - Project list with thumbnails, search, duplicate and delete.
 - Project folders (e.g. one per customer): create, rename and delete folders,
   move designs with the Move menu or by dragging a card onto a folder, and
