@@ -106,18 +106,17 @@ export function availableWeights(family: string): Promise<number[]> | null {
   }
   let probe = weightProbes.get(family);
   if (!probe) {
-    probe = Promise.all(FONT_WEIGHTS.map(async ({ weight }) => {
-      try {
-        const res = await fetch(`https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@${String(weight)}`);
-        return res.ok ? weight : null;
-      } catch {
-        return null;
-      }
-    })).then((weights) => {
-      const found = weights.filter((weight): weight is number => weight !== null);
-      // Offline or blocked: don't pretend the family has no weights.
-      return found.length > 0 ? found : FONT_WEIGHTS.map((entry) => entry.weight);
-    });
+    probe = fetch(`/api/fonts/weights?family=${encodeURIComponent(family)}`)
+      .then(async (res) => (res.ok ? ((await res.json()) as { weights: number[] }).weights : []))
+      .catch(() => [] as number[])
+      .then((found) => {
+        if (found.length === 0) {
+          // Offline or blocked: offer every weight and ask again next time.
+          weightProbes.delete(family);
+          return FONT_WEIGHTS.map((entry) => entry.weight);
+        }
+        return found;
+      });
     weightProbes.set(family, probe);
   }
   return probe;

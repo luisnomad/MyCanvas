@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type DesignSummary } from "@mycanvas/shared";
 import { useEditorStore } from "../../store/editorStore";
 import { ContentDialog } from "./ContentDialog";
+import { FormatFontsDialog } from "./FormatFontsDialog";
 
 /**
  * Top-bar entry for document formats. On a format: what the pages mean,
@@ -13,7 +14,7 @@ export function FormatMenu() {
   const setDesignKind = useEditorStore((state) => state.setDesignKind);
   const saveNow = useEditorStore((state) => state.saveNow);
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<"create" | "reflow" | null>(null);
+  const [dialog, setDialog] = useState<"create" | "reflow" | "fonts" | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -116,6 +117,17 @@ export function FormatMenu() {
                     className="secondary"
                     onClick={() => {
                       setOpen(false);
+                      setDialog("fonts");
+                    }}
+                  >
+                    Fonts…
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="secondary"
+                    onClick={() => {
+                      setOpen(false);
                       setDesignKind(undefined);
                     }}
                   >
@@ -144,6 +156,7 @@ export function FormatMenu() {
               )}
         </div>
       )}
+      {dialog === "fonts" && <FormatFontsDialog onClose={() => { setDialog(null); }} />}
       {dialog === "create" && (
         <ContentDialog mode="create" formats={[thisFormat]} initialFormatId={design.id} folderId={design.folderId} onClose={() => { setDialog(null); }} />
       )}

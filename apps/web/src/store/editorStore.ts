@@ -180,6 +180,8 @@ export interface EditorStore {
   movePage: (pageId: string, toIndex: number) => void;
   /** Marks the design as a document format (or back to a plain design). */
   setDesignKind: (kind: "format" | undefined) => void;
+  /** Patches layers wherever they are, on any page (one undo step). */
+  updateLayersOnAnyPage: (entries: { id: string; patch: LayerPatch }[]) => void;
   /** Replaces every page (one undo step), e.g. after re-flowing content. */
   replacePages: (pages: DesignPage[], source?: DocumentSource) => void;
 }
@@ -1079,6 +1081,20 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       }
       set({ design: { ...design, kind } });
       markDirty();
+    },
+
+    updateLayersOnAnyPage: (entries) => {
+      const patches = new Map(entries.map((entry) => [entry.id, entry.patch]));
+      changePages((pages, activePageId) => ({
+        pages: pages.map((page) => ({
+          ...page,
+          layers: page.layers.map((layer) => {
+            const patch = patches.get(layer.id);
+            return patch && !(layer.locked && !patchAllowedOnLocked(patch)) ? ({ ...layer, ...patch }) as Layer : layer;
+          }),
+        })),
+        activePageId,
+      }));
     },
 
     replacePages: (pages, source) => {

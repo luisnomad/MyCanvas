@@ -607,6 +607,40 @@ app.get("/api/fonts/system", async (c) => {
 const googleFamilies = new Set(GOOGLE_FONTS.map((font) => font.family));
 const fontCacheDir = path.join(dataDir, "font-cache");
 
+const weightCache = new Map<string, Promise<number[]>>();
+
+/**
+ * Upright weights a Google font family has. Google answers 400 for a weight
+ * the family lacks (without CORS headers, so browsers can't probe it
+ * quietly). Cached per family for the server's lifetime.
+ */
+app.get("/api/fonts/weights", async (c) => {
+  const family = c.req.query("family") ?? "";
+  if (!googleFamilies.has(family)) {
+    return c.json({ error: "Not a Google font" }, 404);
+  }
+  let probe = weightCache.get(family);
+  if (!probe) {
+    probe = Promise.all([100, 200, 300, 400, 500, 600, 700, 800, 900].map(async (weight) => {
+      try {
+        const res = await fetch(`https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@${String(weight)}`, {
+          headers: { "User-Agent": "MyCanvas font check" },
+        });
+        return res.ok ? weight : null;
+      } catch {
+        return null;
+      }
+    })).then((weights) => weights.filter((weight): weight is number => weight !== null));
+    weightCache.set(family, probe);
+  }
+  const weights = await probe;
+  if (weights.length === 0) {
+    // Offline or blocked: don't cache a wrong answer.
+    weightCache.delete(family);
+  }
+  return c.json({ weights });
+});
+
 /**
  * A Google Font as a TrueType file, for embedding real text in PDF exports.
  * Only families from the curated list; files are public, so the cache is

@@ -120,6 +120,9 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   (title, lead, heading, body, callout) or an image, a **box** drawn behind a
   sample (e.g. a callout strip), and decorations that skip the last page (e.g.
   a "next page" arrow). Everything else repeats on every page.
+- Format → Fonts…: one row per block kind (title, lead, heading, body,
+  callout) to choose its font and weight in one place; kinds without a
+  sample show what they fall back to.
 - "New document" writes or pastes content in a small Markdown dialect (`#`
   title, `**…**` lead, `##` heading, `>` callout, `![name](upload)` image,
   `---` new page) and lays it out: blocks stack in the flow area and continue
