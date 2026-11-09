@@ -19,7 +19,7 @@ export interface RoleSample {
   page: number;
   /** Text for the sample (title lines merged). */
   text: string;
-  /** Font size, pt (median for a merged title). */
+  /** Font size, pt (the smallest line's for a merged title). */
   size: number;
   /** Line spacing ÷ size. */
   lineHeight: number;
@@ -181,12 +181,15 @@ export function classifyExample(pages: ExamplePage[]): ExampleRoles {
         .filter((entry) => entry.page === 0 && entry.block.font.use === first.block.font.use && entry.block.color === first.block.color && entry.block.size >= bodySize * 1.6)
         .sort((a, b) => a.block.y - b.block.y);
       text = lines.map((entry) => entry.block.text).join("\n");
-      size = median(lines.map((entry) => entry.block.size)) ?? size;
+      // Lines set in different sizes were fitted to their width: the smallest is
+      // the size new title text can take without overflowing.
+      size = Math.min(...lines.map((entry) => entry.block.size), size);
       const firstLine = lines[0]?.block;
       const lastLine = lines[lines.length - 1]?.block;
       if (lines.length > 1 && firstLine && lastLine) {
-        // Distance between the first and last lines' tops, per line, relative to size.
-        lineHeight = Math.min(2, Math.max(0.8, (lastLine.y - firstLine.y) / (lines.length - 1) / size));
+        // Distance between the first and last baselines, per line, relative to size
+        // (tops differ when the lines are set in different sizes).
+        lineHeight = Math.min(2, Math.max(0.8, (lastLine.baseline - firstLine.baseline) / (lines.length - 1) / size));
       }
     }
     samples[role] = {

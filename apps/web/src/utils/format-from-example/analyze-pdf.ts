@@ -24,6 +24,8 @@ export interface TextBlock {
   color: string;
   /** Baseline-to-baseline distance ÷ size (1.2 when single-line). */
   lineHeight: number;
+  /** The first line's baseline, pt from the top. */
+  baseline: number;
   lines: number;
   /** A coloured rectangle behind the text, when there is one. */
   box?: { x: number; y: number; width: number; height: number; color: string };
@@ -376,6 +378,7 @@ async function analyzeNow(file: File, maxPages: number): Promise<{ pages: Analyz
         font: withFlags(resolvePdfFont(first?.fontName ?? ""), first?.fontFlags),
         color: hex(...glyph),
         lineHeight: Math.min(2.5, Math.max(0.8, lineHeight)),
+        baseline: baselines[0] ?? top + size * 0.85,
         lines: lines.length,
         box,
       };

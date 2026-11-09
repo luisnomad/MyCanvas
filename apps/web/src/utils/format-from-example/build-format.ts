@@ -11,6 +11,7 @@ import {
 } from "@mycanvas/shared";
 import { api } from "../../api";
 import { newLayerId } from "../../store/editorStore";
+import { ensureFontLoaded } from "../fonts";
 import { type AnalyzedPage, type TextBlock } from "./analyze-pdf";
 import { type ExampleRoles, classifyExample } from "./classify-example";
 
@@ -97,17 +98,60 @@ function baseLayer(name: string, x: number, y: number) {
   return { id: newLayerId(), name, x, y, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, visible: true };
 }
 
-function textLayer(name: string, block: TextBlock, text: string, size: number, lineHeight: number, wrapWidth: number): TextLayer {
+function styleOf(block: TextBlock): string {
+  return formatFontStyle({ weight: block.font.weight, italic: block.font.italic });
+}
+
+/**
+ * Where the canvas puts a font's baseline below the middle of its line, per px
+ * of size: (ascent − descent) / 2, as Konva uses it. Loads the font first.
+ */
+async function baselineOffsets(blocks: TextBlock[]): Promise<Map<string, number>> {
+  const offsets = new Map<string, number>();
+  const context = document.createElement("canvas").getContext("2d");
+  for (const block of blocks) {
+    const style = styleOf(block);
+    const key = `${block.font.use}|${style}`;
+    if (offsets.has(key)) {
+      continue;
+    }
+    await ensureFontLoaded(block.font.use, style);
+    let offset = 0.36;
+    if (context) {
+      const { weight, italic } = block.font;
+      context.font = `${italic ? "italic " : ""}${String(weight)} 100px "${block.font.use}"`;
+      const metrics = context.measureText("Hg");
+      const ascent = metrics.fontBoundingBoxAscent || metrics.actualBoundingBoxAscent;
+      const descent = metrics.fontBoundingBoxDescent || metrics.actualBoundingBoxDescent;
+      if (ascent > 0) {
+        offset = (ascent - descent) / 2 / 100;
+      }
+    }
+    offsets.set(key, offset);
+  }
+  return offsets;
+}
+
+/**
+ * A text layer whose first baseline lands on the example's: Konva draws a
+ * line's baseline at lineHeight × size / 2 + (ascent − descent) / 2 below
+ * the layer's top, so the top depends on the line spacing and the font.
+ */
+function textLayer(name: string, block: TextBlock, text: string, size: number, lineHeight: number, wrapWidth: number, offsets: Map<string, number>): TextLayer {
+  const fontSize = Math.round(size * K * 10) / 10;
+  const roundedLineHeight = Math.round(lineHeight * 100) / 100;
+  const offset = offsets.get(`${block.font.use}|${styleOf(block)}`) ?? 0.36;
+  const y = block.baseline * K - fontSize * (roundedLineHeight / 2 + offset);
   return {
-    ...baseLayer(name, block.x * K, block.y * K),
+    ...baseLayer(name, block.x * K, Math.round(y * 10) / 10),
     type: "text",
     text,
     fontFamily: block.font.use,
-    fontSize: Math.round(size * K * 10) / 10,
-    fontStyle: formatFontStyle({ weight: block.font.weight, italic: block.font.italic }),
+    fontSize,
+    fontStyle: styleOf(block),
     fill: block.color,
     align: "left",
-    lineHeight: Math.round(lineHeight * 100) / 100,
+    lineHeight: roundedLineHeight,
     letterSpacing: 0,
     wrapWidth: Math.round(wrapWidth),
     effect: { type: "none" },
@@ -138,6 +182,9 @@ export async function buildFormat(analyzed: AnalyzedPage[], baseName: string, on
   if (!roles.samples.body) {
     throw new Error("No text found to learn from. Is the PDF scanned or flattened?");
   }
+
+  onProgress("Loading fonts…");
+  const offsets = await baselineOffsets(analyzed.flatMap((page) => page.blocks));
 
   const pages: DesignPage[] = [];
   let imageSampleDone = false;
@@ -248,7 +295,7 @@ export async function buildFormat(analyzed: AnalyzedPage[], baseName: string, on
           formatRole: { kind: "box", block: kind },
         } satisfies RectLayer);
       }
-      const text = textLayer(`${LABELS[kind]} sample`, block, sample.text, sample.size, sample.lineHeight, wrap);
+      const text = textLayer(`${LABELS[kind]} sample`, block, sample.text, sample.size, sample.lineHeight, wrap, offsets);
       text.formatRole = { kind: "sample", block: kind, spaceBefore: Math.round(sample.spaceBefore * K) };
       layers.push(text);
     }
@@ -256,7 +303,7 @@ export async function buildFormat(analyzed: AnalyzedPage[], baseName: string, on
       layers.push(imageSample);
     }
     for (const block of furniture) {
-      layers.push(textLayer("Page text (from example)", block, block.text, block.size, block.lineHeight, block.width * K + 6));
+      layers.push(textLayer("Page text (from example)", block, block.text, block.size, block.lineHeight, block.width * K + 6, offsets));
     }
     layers.push({
       ...baseLayer("Example page (reference)", 0, 0),

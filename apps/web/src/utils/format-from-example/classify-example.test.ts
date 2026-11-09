@@ -13,6 +13,7 @@ function block(text: string, y: number, size: number, family: string, weight: nu
     font: { family, use: family, exact: true, weight, italic: false },
     color,
     lineHeight: 1.2,
+    baseline: y + size * 0.85,
     lines: 1,
     ...extra,
   };
@@ -40,6 +41,8 @@ describe("classifyExample", () => {
     };
     const roles = classifyExample([page]);
     expect(roles.samples.title?.text).toBe("FINANZAS\nDESDE EL");
+    // Lines fitted to width in different sizes: the smaller one, so new titles don't overflow.
+    expect(roles.samples.title?.size).toBe(57);
     expect(roles.samples.lead?.block.font.weight).toBe(700);
     expect(roles.samples.lead?.block.size).toBe(21.5);
     expect(roles.samples.heading?.text).toBe("1. CUMPLIR");
