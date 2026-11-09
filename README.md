@@ -111,10 +111,12 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
 
 ## Layout
 
-- `apps/server` — Hono API. Data lives in `apps/server/data/` (`designs/*.json`,
-  `templates/*.json`, `assets/*`, `settings.json`), or in `MYCANVAS_DATA_DIR`
-  when set. Back it up or git-track it if you like. In production it also serves
-  the built web app.
+- `apps/server` — Hono API. Each person has a private workspace in
+  `apps/server/data/users/<email>/` (`designs/*.json`, `templates/*.json`,
+  `assets/*`, `settings.json`), or under `MYCANVAS_DATA_DIR` when set. Locally
+  (and on the LAN route) everything belongs to `MYCANVAS_LOCAL_USER`; behind
+  Cloudflare Access the signed-in email picks the workspace. In production it
+  also serves the built web app.
 - `Dockerfile` + `docker-compose.coolify.yml` — single-container deployment
   (used on Coolify); `ops/traefik/` holds the LAN-only HTTPS route.
 - `apps/web` — React + react-konva editor (Vite).
