@@ -10,6 +10,7 @@ import { LeftToolbar } from "../components/LeftToolbar";
 import { SaveTemplateButton } from "../components/SaveTemplateButton";
 import { ShortcutsDialog } from "../components/ShortcutsDialog";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { UserBadge } from "../components/UserBadge";
 import { ViewMenu } from "../components/ViewMenu";
 import { useEditorStore } from "../store/editorStore";
 import { useViewSettings } from "../store/viewSettings";
@@ -275,6 +276,7 @@ export function Editor({ designId }: { designId: string }) {
         >
           Export
         </button>
+        <UserBadge />
       </header>
       <div className="editor-main">
         <LeftToolbar textPropertiesRequest={textPropertiesRequest} />

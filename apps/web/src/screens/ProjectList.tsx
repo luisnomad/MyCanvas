@@ -5,6 +5,7 @@ import { Brand } from "../components/Brand";
 import { TemplateGallery } from "../components/TemplateGallery";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { UploadsManager } from "../components/uploads/UploadsManager";
+import { UserBadge } from "../components/UserBadge";
 import { relativeEditedTime } from "../utils/relative-time";
 
 const MAX_CANVAS = 8192;
@@ -159,6 +160,7 @@ export function ProjectList() {
             Uploads
           </button>
           <ThemeToggle />
+          <UserBadge />
         </div>
       </header>
 

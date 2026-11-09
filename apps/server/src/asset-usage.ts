@@ -4,7 +4,7 @@ import path from "node:path";
 import { type AssetUsage, type Design } from "@mycanvas/shared";
 
 import { STARTER_TEMPLATES } from "./starter-templates";
-import { designsDir, readJsonFile, templatesDir } from "./storage";
+import { type Workspace, readJsonFile } from "./storage";
 
 /** Assets a design draws: image layers and filled frames. */
 function assetsOf(design: Design): Set<string> {
@@ -32,8 +32,8 @@ async function readAll(dir: string): Promise<Design[]> {
   return designs.filter((design): design is Design => design !== null);
 }
 
-/** asset file name → the designs and templates that use it. */
-export async function assetUsageIndex(): Promise<Map<string, AssetUsage[]>> {
+/** asset file name → the workspace's designs and templates that use it. */
+export async function assetUsageIndex(workspace: Workspace): Promise<Map<string, AssetUsage[]>> {
   const index = new Map<string, AssetUsage[]>();
   const add = (designs: Design[], kind: AssetUsage["kind"]) => {
     for (const design of designs) {
@@ -44,7 +44,7 @@ export async function assetUsageIndex(): Promise<Map<string, AssetUsage[]>> {
       }
     }
   };
-  add(await readAll(designsDir), "design");
-  add([...(await readAll(templatesDir)), ...STARTER_TEMPLATES], "template");
+  add(await readAll(workspace.designsDir), "design");
+  add([...(await readAll(workspace.templatesDir)), ...STARTER_TEMPLATES], "template");
   return index;
 }

@@ -51,7 +51,15 @@ export interface CreateDesignInput {
   templateId?: string;
 }
 
+export interface Me {
+  email: string;
+  via: "access" | "local";
+  /** Ends the Cloudflare Access session; null for the local (LAN) route. */
+  logoutUrl: string | null;
+}
+
 export const api = {
+  me: () => request<Me>("/api/me"),
   listDesigns: () => request<DesignSummary[]>("/api/designs"),
   createDesign: (input: CreateDesignInput) => request<Design>("/api/designs", jsonInit("POST", input)),
   getDesign: (id: string) => request<Design>(`/api/designs/${encodeURIComponent(id)}`),

@@ -816,3 +816,52 @@ input.color-hex:focus {
     display: none;
   }
 }
+
+/* Signed-in user */
+
+.user-badge {
+  position: relative;
+}
+
+.user-avatar {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  font-weight: 600;
+  font-size: 13px;
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 240px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.user-menu p {
+  margin: 0 0 6px;
+}
+
+.user-menu-email {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.user-menu-note {
+  font-size: 12px;
+}
+
+.user-menu-signout {
+  display: inline-block;
+  margin-top: 4px;
+}

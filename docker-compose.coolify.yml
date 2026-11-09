@@ -1,6 +1,8 @@
 # Coolify deployment (build pack: Docker Compose). No published ports and no
-# Coolify domain: the app is reached only through the LAN-restricted Traefik
-# route in ops/traefik/mycanvas-local.yaml (https://canva.local).
+# Coolify domain: the app is reached only through the Traefik routes in
+# ops/traefik/mycanvas-local.yaml — https://canva.local (LAN, owner) and
+# https://mycanvas.luisserrano.es (Cloudflare Tunnel + Access, per-person
+# workspaces).
 services:
   mycanvas:
     # Coolify renames this to mycanvas-<app uuid>, a stable name for the route.
@@ -10,6 +12,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    environment:
+      # Owner of the LAN route (canva.local) and of pre-workspace data.
+      MYCANVAS_LOCAL_USER: ${MYCANVAS_LOCAL_USER:-}
+      # Cloudflare Access (mycanvas.luisserrano.es): JWT issuer and app AUD.
+      MYCANVAS_ACCESS_TEAM_DOMAIN: ${MYCANVAS_ACCESS_TEAM_DOMAIN:-}
+      MYCANVAS_ACCESS_AUD: ${MYCANVAS_ACCESS_AUD:-}
+      # Optional second gate after the Access policy (comma-separated).
+      MYCANVAS_ALLOWED_EMAILS: ${MYCANVAS_ALLOWED_EMAILS:-}
     volumes:
       - mycanvas-data:/data
 

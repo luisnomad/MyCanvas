@@ -1,7 +1,18 @@
-# MyCanvas local HTTPS, installed on nmd-srvr at
+# MyCanvas routes, installed on nmd-srvr at
 # /data/coolify/proxy/dynamic/mycanvas-local.yaml. It does not change other
-# Coolify routes. canva.local has no public DNS: the Mac maps it to the
-# server in /etc/hosts and trusts the self-signed cert in its keychain.
+# Coolify routes.
+#
+# 1. https://canva.local — LAN only. No public DNS: the Mac maps it to the
+#    server in /etc/hosts and trusts the self-signed cert in its keychain.
+#    Requests are marked `local`: the server treats them as the owner
+#    (MYCANVAS_LOCAL_USER). Any Cloudflare token sent by a client is dropped.
+# 2. https://mycanvas.luisserrano.es — public, through the Cloudflare Tunnel
+#    and Cloudflare Access (one-time PIN to allowed emails). Only tunnel
+#    traffic is accepted (cloudflared reaches Traefik via the coolify bridge
+#    gateway), so the Access login can't be bypassed by talking to the server
+#    directly. Requests are marked `public`: the server requires and verifies
+#    the Access JWT and opens that person's own workspace.
+#
 # HTTPS is required: WebGPU, the model cache and local font access only work
 # in a secure context.
 http:
@@ -14,9 +25,16 @@ http:
     mycanvas-local-tls:
       rule: "Host(`canva.local`)"
       entryPoints: [https]
-      middlewares: [mycanvas-local-lan, mycanvas-local-headers]
+      middlewares: [mycanvas-local-lan, mycanvas-local-identity, mycanvas-local-headers]
       service: mycanvas-local
       tls: {}
+    mycanvas-public-tls:
+      rule: "Host(`mycanvas.luisserrano.es`)"
+      entryPoints: [https]
+      middlewares: [mycanvas-tunnel-only, mycanvas-public-identity, mycanvas-public-headers]
+      service: mycanvas-local
+      tls:
+        certResolver: letsencrypt
   services:
     mycanvas-local:
       loadBalancer:
@@ -30,11 +48,29 @@ http:
     mycanvas-local-lan:
       ipAllowList:
         sourceRange: ["192.168.0.0/24", "127.0.0.1/32", "::1/128"]
+    mycanvas-local-identity:
+      headers:
+        customRequestHeaders:
+          X-MyCanvas-Route: "local"
+          Cf-Access-Jwt-Assertion: ""
     mycanvas-local-headers:
       headers:
         frameDeny: true
         contentTypeNosniff: true
         referrerPolicy: same-origin
+    mycanvas-tunnel-only:
+      ipAllowList:
+        sourceRange: ["10.0.1.1/32"]
+    mycanvas-public-identity:
+      headers:
+        customRequestHeaders:
+          X-MyCanvas-Route: "public"
+    mycanvas-public-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        referrerPolicy: same-origin
+        stsSeconds: 31536000
 tls:
   certificates:
     - certFile: /traefik/certs/canva.local/cert.pem
