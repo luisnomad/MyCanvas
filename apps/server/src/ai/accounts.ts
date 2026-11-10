@@ -633,7 +633,16 @@ interface PixverseAnswer {
 async function pixverseRaw(endpoint: string, token: string | null, body?: Record<string, unknown>): Promise<PixverseAnswer> {
   const response = await send(`${PIXVERSE}/${endpoint}`, {
     method: body ? "POST" : "GET",
-    headers: { "Accept": "application/json", "Accept-Language": "en-US", ...(body ? { "Content-Type": "application/json" } : {}), ...(token ? { Token: token } : {}) },
+    headers: {
+      "Accept": "application/json",
+      "Accept-Language": "en-US",
+      // The device login is PixVerse's CLI login: its tokens belong to the CLI platform, and
+      // calls without these headers count as another (web) session, which ends the login.
+      "x-platform": "CLI",
+      "x-cli-source": "cli",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Token: token } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return readJson<PixverseAnswer>(response, "PixVerse");
@@ -643,6 +652,9 @@ async function pixverseCall<T>(connection: AiConnection, endpoint: string, token
   const answer = await pixverseRaw(endpoint, token, body);
   if (answer.ErrCode === 10001 || answer.ErrCode === 10004) {
     throw new ProviderError(`${connection.name}: the login has expired. Log in again in AI settings.`);
+  }
+  if (/logged in elsewhere/i.test(answer.ErrMsg ?? "")) {
+    throw new ProviderError(`${connection.name} ended this login because the account logged in somewhere else. Log in again in AI settings.`);
   }
   if (answer.ErrCode !== 0) {
     throw new ProviderError(`${connection.name}: ${answer.ErrMsg ?? `error ${String(answer.ErrCode)}`}`);
