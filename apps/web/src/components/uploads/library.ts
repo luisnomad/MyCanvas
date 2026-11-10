@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { type AssetInfo, type AssetUsage } from "@mycanvas/shared";
+import { type AssetInfo, type AssetUsage, type Folder } from "@mycanvas/shared";
 import { api } from "../../api";
 import { getCachedImageSize } from "../../hooks/useImage";
 import { allDesignLayers, useEditorStore } from "../../store/editorStore";
+import { type FolderView, inView } from "../../utils/folders";
 
 export type AssetFilter = "all" | "used" | "unused" | "generated";
 
@@ -31,9 +32,12 @@ export function usageOf(info: AssetInfo): AssetUsage[] {
   return usesIt ? [{ id: design.id, name: design.name, kind: "design" }, ...info.usedIn] : info.usedIn;
 }
 
-export function filterAssets(assets: AssetInfo[], filter: AssetFilter, query: string): AssetInfo[] {
+export function filterAssets(assets: AssetInfo[], filter: AssetFilter, query: string, view: FolderView = { kind: "all" }): AssetInfo[] {
   const needle = query.trim().toLowerCase();
   return assets.filter((info) => {
+    if (!inView(view, info.folderId)) {
+      return false;
+    }
     if (needle && !info.name.toLowerCase().includes(needle)) {
       return false;
     }
@@ -84,15 +88,16 @@ export function useAssetLibrary() {
   const assetsVersion = useEditorStore((state) => state.assetsVersion);
   const bumpAssetsVersion = useEditorStore((state) => state.bumpAssetsVersion);
   const [assets, setAssets] = useState<AssetInfo[] | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void api
-      .listAssets()
-      .then((list) => {
+    void Promise.all([api.listAssets(), api.listAssetFolders()])
+      .then(([list, folderList]) => {
         if (!cancelled) {
           setAssets(list);
+          setFolders(folderList);
           setError(null);
         }
       })
@@ -106,13 +111,13 @@ export function useAssetLibrary() {
     };
   }, [assetsVersion]);
 
-  /** Uploads files one by one; returns the new assets (failures reported). */
-  const upload = useCallback(async (files: File[]) => {
+  /** Uploads files one by one, into `folderId` when given; returns the new assets (failures reported). */
+  const upload = useCallback(async (files: File[], folderId?: string) => {
     const added: string[] = [];
     const failures: string[] = [];
     for (const file of files) {
       try {
-        added.push((await api.uploadAsset(file)).asset);
+        added.push((await api.uploadAsset(file, folderId)).asset);
       } catch (reason) {
         failures.push(`${file.name}: ${reason instanceof Error ? reason.message : "upload failed"}`);
       }
@@ -137,5 +142,32 @@ export function useAssetLibrary() {
     bumpAssetsVersion();
   }, [bumpAssetsVersion]);
 
-  return { assets, error, setError, upload, rename, remove };
+  /** Files uploads in a folder, or takes them out of any folder (null). */
+  const move = useCallback(async (assetIds: string[], folderId: string | null) => {
+    try {
+      await api.moveAssets(assetIds, folderId);
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not move the uploads");
+    }
+    bumpAssetsVersion();
+  }, [bumpAssetsVersion]);
+
+  const createFolder = useCallback(async (name: string) => {
+    const folder = await api.createAssetFolder(name);
+    bumpAssetsVersion();
+    return folder;
+  }, [bumpAssetsVersion]);
+
+  const renameFolder = useCallback(async (id: string, name: string) => {
+    await api.renameAssetFolder(id, name);
+    bumpAssetsVersion();
+  }, [bumpAssetsVersion]);
+
+  const deleteFolder = useCallback(async (id: string) => {
+    await api.deleteAssetFolder(id);
+    bumpAssetsVersion();
+  }, [bumpAssetsVersion]);
+
+  return { assets, folders, error, setError, upload, rename, remove, move, createFolder, renameFolder, deleteFolder };
 }

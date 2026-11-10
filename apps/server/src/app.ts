@@ -23,6 +23,7 @@ import {
 
 import { isOwner } from "./ai/network";
 import { registerAiRoutes } from "./ai/routes";
+import { assetFolderIndex, forgetAsset, placeAssets, registerAssetFolderRoutes } from "./asset-folders";
 import { assetUsageIndex } from "./asset-usage";
 import { readAssetManifest, saveAsset } from "./assets-store";
 import { type Identity, identify } from "./auth";
@@ -512,7 +513,7 @@ app.get("/api/assets", async (c) => {
   } catch {
     return c.json([]);
   }
-  const [manifest, usage] = await Promise.all([readAssetManifest(ws), assetUsageIndex(ws)]);
+  const [manifest, usage, placed] = await Promise.all([readAssetManifest(ws), assetUsageIndex(ws), assetFolderIndex(ws)]);
   const infos = await Promise.all(files.map(async (asset): Promise<AssetInfo | null> => {
     try {
       const info = await stat(path.join(ws.assetsDir, asset));
@@ -524,6 +525,7 @@ app.get("/api/assets", async (c) => {
         uploadedAt: info.mtime.toISOString(),
         generated: isGeneratedAssetName(name),
         usedIn: usage.get(asset) ?? [],
+        folderId: placed.get(asset),
       };
     } catch {
       return null;
@@ -551,6 +553,11 @@ app.post("/api/assets", async (c) => {
     return c.json({ error: `Unsupported file type: ${ext || "(none)"}` }, 400);
   }
   const asset = await saveAsset(ws, Buffer.from(await file.arrayBuffer()), ext, file.name);
+  // Uploaded while a folder was open: file it there (an unknown folder leaves it unfiled).
+  const folderId = form.get("folderId");
+  if (typeof folderId === "string" && isSafeId(folderId)) {
+    await placeAssets(ws, [asset], folderId);
+  }
   return c.json({ asset, name: file.name }, 201);
 });
 
@@ -598,6 +605,7 @@ app.delete("/api/assets/:file", async (c) => {
     delete manifest[file];
     await writeJsonFile(ws.assetsManifestFile, manifest);
   }
+  await forgetAsset(ws, file);
   return c.json({ ok: true });
 });
 
@@ -715,6 +723,7 @@ app.put("/api/fonts/favorites", async (c) => {
 });
 
 registerAiRoutes(app);
+registerAssetFolderRoutes(app, isSafeAssetFile);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 

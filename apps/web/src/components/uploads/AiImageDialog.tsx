@@ -105,7 +105,8 @@ function creditText(credits: AiCredits | null): string {
   return credits.plan ? `${amount} · ${credits.plan}` : amount;
 }
 
-export function AiImageDialog({ onClose, onPlace }: { onClose: () => void; onPlace: (asset: string, as: "layer" | "background") => void }) {
+/** `folderId`: the upload folder open in the panel; a used picture is filed there. */
+export function AiImageDialog({ onClose, onPlace, folderId }: { onClose: () => void; onPlace: (asset: string, as: "layer" | "background") => void; folderId?: string }) {
   const design = useEditorStore((state) => state.design);
   const bumpAssetsVersion = useEditorStore((state) => state.bumpAssetsVersion);
   const [connections, setConnections] = useState<AiConnection[] | null>(null);
@@ -295,7 +296,7 @@ export function AiImageDialog({ onClose, onPlace }: { onClose: () => void; onPla
     setPlacing(true);
     setError(null);
     try {
-      const asset = await uploadGenerated(current.blob, current.prompt);
+      const asset = await uploadGenerated(current.blob, current.prompt, folderId);
       bumpAssetsVersion();
       onPlace(asset, as);
       onClose();

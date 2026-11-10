@@ -121,11 +121,25 @@ export const api = {
   deleteTemplate: (id: string) =>
     request<{ ok: boolean }>(`/api/templates/${encodeURIComponent(id)}`, { method: "DELETE" }),
   listAssets: () => request<AssetInfo[]>("/api/assets"),
-  uploadAsset: (file: File) => {
+  /** With `folderId`, the upload is filed in that upload folder. */
+  uploadAsset: (file: File, folderId?: string) => {
     const form = new FormData();
     form.append("file", file);
+    if (folderId) {
+      form.append("folderId", folderId);
+    }
     return request<Pick<AssetInfo, "asset" | "name">>("/api/assets", { method: "POST", body: form });
   },
+  /** Upload folders: separate from design folders. */
+  listAssetFolders: () => request<Folder[]>("/api/asset-folders"),
+  createAssetFolder: (name: string) => request<Folder>("/api/asset-folders", jsonInit("POST", { name })),
+  renameAssetFolder: (id: string, name: string) =>
+    request<Folder>(`/api/asset-folders/${encodeURIComponent(id)}`, jsonInit("PATCH", { name })),
+  /** Its uploads are kept and become unfiled. */
+  deleteAssetFolder: (id: string) => request<{ ok: boolean }>(`/api/asset-folders/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** Files uploads in a folder; null takes them out of any folder. */
+  moveAssets: (assets: string[], folderId: string | null) =>
+    request<{ ok: boolean; moved: number }>("/api/assets/move", jsonInit("POST", { assets, folderId })),
   renameAsset: (file: string, name: string) =>
     request<Pick<AssetInfo, "asset" | "name">>(`/api/assets/${encodeURIComponent(file)}`, jsonInit("PATCH", { name })),
   /** Rejects with ApiError 409 (body.usedIn) for images in use unless `force`. */

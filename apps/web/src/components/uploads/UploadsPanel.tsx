@@ -5,6 +5,7 @@ import { AiImageDialog } from "./AiImageDialog";
 import { AssetTile, type TileAction } from "./AssetTile";
 import { DeleteAssetsDialog } from "./DeleteAssetsDialog";
 import { ASSET_FILTERS, type AssetFilter, UPLOAD_ACCEPT, filterAssets, loadAssetSize, useAssetLibrary } from "./library";
+import { UploadFolderSelect, folderCounts, folderIdOf, useUploadFolderView } from "./UploadFolders";
 import { UploadsManager } from "./UploadsManager";
 
 /**
@@ -15,7 +16,8 @@ import { UploadsManager } from "./UploadsManager";
 export function UploadsPanel() {
   const addImageLayer = useEditorStore((state) => state.addImageLayer);
   const addImageLayerAsBackground = useEditorStore((state) => state.addImageLayerAsBackground);
-  const { assets, error, setError, upload, rename, remove } = useAssetLibrary();
+  const { assets, folders, error, setError, upload, rename, remove, move, createFolder } = useAssetLibrary();
+  const [view, setView] = useUploadFolderView(assets ? folders : null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [pendingDelete, setPendingDelete] = useState<AssetInfo[] | null>(null);
@@ -24,7 +26,8 @@ export function UploadsPanel() {
   const [dropActive, setDropActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const visible = useMemo(() => filterAssets(assets ?? [], filter, query), [assets, filter, query]);
+  const visible = useMemo(() => filterAssets(assets ?? [], filter, query, view), [assets, filter, query, view]);
+  const counts = useMemo(() => folderCounts(assets ?? []), [assets]);
 
   const place = useCallback((asset: string, as: "layer" | "background") => {
     void loadAssetSize(asset)
@@ -39,7 +42,7 @@ export function UploadsPanel() {
   }, [addImageLayer, addImageLayerAsBackground, setError]);
 
   const uploadFiles = (files: File[]) => {
-    void upload(files).then((added) => {
+    void upload(files, folderIdOf(view)).then((added) => {
       // One image: put it straight on the page, like before. Several: library only.
       const [only] = added;
       if (added.length === 1 && only) {
@@ -51,6 +54,8 @@ export function UploadsPanel() {
   const actionsFor = (info: AssetInfo): TileAction[] => [
     { label: "Add to page", onClick: () => { place(info.asset, "layer"); } },
     { label: "Set as background", onClick: () => { place(info.asset, "background"); } },
+    ...folders.filter((folder) => folder.id !== info.folderId).map((folder) => ({ label: `Move to “${folder.name}”`, onClick: () => { void move([info.asset], folder.id); } })),
+    ...(info.folderId ? [{ label: "Remove from folder", onClick: () => { void move([info.asset], null); } }] : []),
     { label: "Delete", danger: true, onClick: () => { setPendingDelete([info]); } },
   ];
 
@@ -59,7 +64,7 @@ export function UploadsPanel() {
     setDropActive(false);
     const files = [...e.dataTransfer.files].filter((file) => file.type.startsWith("image/"));
     if (files.length > 0) {
-      void upload(files);
+      void upload(files, folderIdOf(view));
     }
   };
 
@@ -94,6 +99,7 @@ export function UploadsPanel() {
         Make with AI
       </button>
       {error && <p className="form-error">{error}</p>}
+      {assets && <UploadFolderSelect folders={folders} counts={counts} view={view} onView={setView} onCreate={createFolder} />}
       <div className="uploads-panel-tools">
         <input
           type="search"
@@ -115,7 +121,7 @@ export function UploadsPanel() {
         {assets ? ` (${String(assets.length)})` : ""}
       </button>
       {assets && visible.length === 0 && (
-        <p className="muted">{assets.length === 0 ? "No uploads yet. Drop images here." : "Nothing matches."}</p>
+        <p className="muted">{assets.length === 0 ? "No uploads yet. Drop images here." : view.kind === "folder" && !query ? "This folder is empty. Drop images here to add them." : "Nothing matches."}</p>
       )}
       <div className="asset-grid">
         {visible.map((info) => (
@@ -153,8 +159,8 @@ export function UploadsPanel() {
           }}
         />
       )}
-      {makerOpen && <AiImageDialog onClose={() => { setMakerOpen(false); }} onPlace={place} />}
-      {managerOpen && <UploadsManager onClose={() => { setManagerOpen(false); }} onPlace={place} />}
+      {makerOpen && <AiImageDialog folderId={folderIdOf(view)} onClose={() => { setMakerOpen(false); }} onPlace={place} />}
+      {managerOpen && <UploadsManager view={view} onView={setView} onClose={() => { setManagerOpen(false); }} onPlace={place} />}
     </div>
   );
 }

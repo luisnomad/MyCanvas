@@ -14,7 +14,7 @@ interface FolderBarProps {
   onDropDesign: (designId: string, folderId: string | null) => void;
 }
 
-function FolderIcon() {
+export function FolderIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -23,7 +23,7 @@ function FolderIcon() {
 }
 
 /** Inline name input used for create and rename. Enter saves, Esc cancels. */
-function NameInput({ initial, onSave, onCancel }: { initial: string; onSave: (name: string) => Promise<void>; onCancel: () => void }) {
+export function NameInput({ initial, onSave, onCancel }: { initial: string; onSave: (name: string) => Promise<void>; onCancel: () => void }) {
   const [value, setValue] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

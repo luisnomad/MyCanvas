@@ -1,5 +1,6 @@
 import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
-import { type AssetInfo } from "@mycanvas/shared";
+import { type AssetInfo, type Folder } from "@mycanvas/shared";
+import { type FolderView } from "../../utils/folders";
 import { relativeTime } from "../../utils/relative-time";
 import { AssetTile, type TileAction } from "./AssetTile";
 import { DeleteAssetsDialog } from "./DeleteAssetsDialog";
@@ -13,15 +14,19 @@ import {
   usageOf,
   useAssetLibrary,
 } from "./library";
+import { MoveUploadsMenu, UploadFolderNav, folderCounts, folderIdOf, useUploadFolderView } from "./UploadFolders";
 
 interface UploadsManagerProps {
   onClose: () => void;
   /** Editor only: place an image on the open design. */
   onPlace?: (asset: string, as: "layer" | "background") => void;
+  /** The open upload folder, shared with the editor's Uploads panel. */
+  view?: FolderView;
+  onView?: (view: FolderView) => void;
 }
 
 /** Details for the focused upload: preview, size, date, where it's used. */
-function AssetDetails({ info }: { info: AssetInfo }) {
+function AssetDetails({ info, folder }: { info: AssetInfo; folder: Folder | undefined }) {
   const [dims, setDims] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     setDims(null);
@@ -50,6 +55,8 @@ function AssetDetails({ info }: { info: AssetInfo }) {
         <dd>{formatBytes(info.size)}</dd>
         <dt>Added</dt>
         <dd title={new Date(info.uploadedAt).toLocaleString()}>{relativeTime(info.uploadedAt)}</dd>
+        <dt>Folder</dt>
+        <dd>{folder?.name ?? "Unfiled"}</dd>
         {info.generated && (
           <>
             <dt>Source</dt>
@@ -76,8 +83,11 @@ function AssetDetails({ info }: { info: AssetInfo }) {
  * Full-size library window: search, filters, multi-select, bulk delete and
  * a details pane. Shared by every project.
  */
-export function UploadsManager({ onClose, onPlace }: UploadsManagerProps) {
-  const { assets, error, upload, rename, remove } = useAssetLibrary();
+export function UploadsManager({ onClose, onPlace, view: sharedView, onView }: UploadsManagerProps) {
+  const { assets, folders, error, setError, upload, rename, remove, move, createFolder, renameFolder, deleteFolder } = useAssetLibrary();
+  const [ownView, setOwnView] = useUploadFolderView(assets ? folders : null);
+  const view = sharedView ?? ownView;
+  const setView = onView ?? setOwnView;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -86,10 +96,31 @@ export function UploadsManager({ onClose, onPlace }: UploadsManagerProps) {
   const [dropActive, setDropActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const visible = useMemo(() => filterAssets(assets ?? [], filter, query), [assets, filter, query]);
+  const visible = useMemo(() => filterAssets(assets ?? [], filter, query, view), [assets, filter, query, view]);
+  const counts = useMemo(() => folderCounts(assets ?? []), [assets]);
   const focused = assets?.find((info) => info.asset === focusedId) ?? visible[0];
   const totalBytes = (assets ?? []).reduce((sum, info) => sum + info.size, 0);
   const selectedInfos = (assets ?? []).filter((info) => selected.has(info.asset));
+  const anyFiled = selectedInfos.some((info) => info.folderId !== undefined);
+
+  const moveSelected = (folderId: string | null) => {
+    void move([...selected], folderId).then(() => { setSelected(new Set()); });
+  };
+
+  const removeFolder = (folder: Folder) => {
+    const count = counts.get(folder.id) ?? 0;
+    const detail = count === 0 ? "It's empty." : `Its ${String(count)} ${count === 1 ? "upload stays" : "uploads stay"}, unfiled.`;
+    if (!window.confirm(`Delete the upload folder "${folder.name}"? ${detail}`)) {
+      return;
+    }
+    deleteFolder(folder.id)
+      .then(() => {
+        if (view.kind === "folder" && view.id === folder.id) {
+          setView({ kind: "all" });
+        }
+      })
+      .catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : "Could not delete the folder"); });
+  };
 
   // Drop selections that no longer exist (deleted elsewhere).
   useEffect(() => {
@@ -139,7 +170,7 @@ export function UploadsManager({ onClose, onPlace }: UploadsManagerProps) {
     setDropActive(false);
     const files = [...e.dataTransfer.files].filter((file) => file.type.startsWith("image/"));
     if (files.length > 0) {
-      void upload(files);
+      void upload(files, folderIdOf(view));
     }
   };
 
@@ -207,30 +238,55 @@ export function UploadsManager({ onClose, onPlace }: UploadsManagerProps) {
                 <>
                   <span className="muted">{`${String(selected.size)} selected`}</span>
                   <button type="button" className="secondary" onClick={() => { setSelected(new Set()); }}>Clear</button>
+                  <MoveUploadsMenu folders={folders} onMove={moveSelected} onCreate={createFolder} />
+                  {anyFiled && <button type="button" className="secondary" onClick={() => { moveSelected(null); }}>Remove from folder</button>}
                   <button type="button" className="danger" onClick={() => { setPendingDelete(selectedInfos); }}>
                     Delete selected
                   </button>
                 </>
               )
             : (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={!assets?.some((info) => usageOf(info).length === 0)}
-                  onClick={() => {
-                    setSelected(new Set((assets ?? []).filter((info) => usageOf(info).length === 0).map((info) => info.asset)));
-                  }}
-                >
-                  Select unused
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={visible.length === 0}
+                    onClick={() => { setSelected(new Set(visible.map((info) => info.asset))); }}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={!visible.some((info) => usageOf(info).length === 0)}
+                    onClick={() => {
+                      setSelected(new Set(visible.filter((info) => usageOf(info).length === 0).map((info) => info.asset)));
+                    }}
+                  >
+                    Select unused
+                  </button>
+                </>
               )}
         </div>
         {error && <p className="form-error">{error}</p>}
         <div className="uploads-body">
+          <UploadFolderNav
+            folders={folders}
+            counts={counts}
+            view={view}
+            onView={(next) => { setView(next); setSelected(new Set()); }}
+            onCreate={async (name) => { await createFolder(name); }}
+            onRename={(folder, name) => renameFolder(folder.id, name)}
+            onDelete={removeFolder}
+          />
           <div className="uploads-grid-scroll">
             {assets && visible.length === 0 && (
               <p className="muted uploads-empty">
-                {assets.length === 0 ? "No uploads yet. Drop images here or use Upload images." : "Nothing matches."}
+                {assets.length === 0
+                  ? "No uploads yet. Drop images here or use Upload images."
+                  : view.kind === "folder" && counts.get(view.id) === undefined
+                    ? "This folder is empty. Select uploads and use Move to folder, or upload here."
+                    : "Nothing matches."}
               </p>
             )}
             <div className="asset-grid uploads-grid">
@@ -247,7 +303,7 @@ export function UploadsManager({ onClose, onPlace }: UploadsManagerProps) {
               ))}
             </div>
           </div>
-          {focused && <AssetDetails info={focused} />}
+          {focused && <AssetDetails info={focused} folder={folders.find((folder) => folder.id === focused.folderId)} />}
         </div>
         <input
           ref={fileInputRef}
@@ -259,7 +315,7 @@ export function UploadsManager({ onClose, onPlace }: UploadsManagerProps) {
             const files = [...(e.target.files ?? [])];
             e.target.value = "";
             if (files.length > 0) {
-              void upload(files);
+              void upload(files, folderIdOf(view));
             }
           }}
         />

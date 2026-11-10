@@ -9,6 +9,8 @@ import { ThemeToggle } from "../components/ThemeToggle";
 import { BlocksFromContentDialog } from "../components/blocks/BlocksFromContentDialog";
 import { ContentDialog } from "../components/formats/ContentDialog";
 import { FormatFromExampleDialog } from "../components/formats/FormatFromExampleDialog";
+import { UploadFolderShelf } from "../components/uploads/UploadFolderShelf";
+import { useUploadFolderView } from "../components/uploads/UploadFolders";
 import { UploadsManager } from "../components/uploads/UploadsManager";
 import { UserBadge } from "../components/UserBadge";
 import { ALL_DESIGNS, DESIGN_DRAG_MIME, type FolderView, folderViewHash, inView } from "../utils/folders";
@@ -47,6 +49,7 @@ export function ProjectList({ view }: { view: FolderView }) {
   const [folders, setFolders] = useState<Folder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showUploads, setShowUploads] = useState(false);
+  const [uploadsView, setUploadsView] = useUploadFolderView(null);
   const [showNew, setShowNew] = useState(false);
   const [showNewDocument, setShowNewDocument] = useState(false);
   const [showFromContent, setShowFromContent] = useState(false);
@@ -443,6 +446,7 @@ export function ProjectList({ view }: { view: FolderView }) {
             </div>
           ))}
         </div>
+        <UploadFolderShelf onOpen={(next) => { setUploadsView(next); setShowUploads(true); }} />
       </div>
 
       {showNew && (
@@ -600,6 +604,8 @@ export function ProjectList({ view }: { view: FolderView }) {
       )}
       {showUploads && (
         <UploadsManager
+          view={uploadsView}
+          onView={setUploadsView}
           onClose={() => {
             setShowUploads(false);
             // Deleting an image changes design previews only on next save.

@@ -138,6 +138,41 @@ describe("workspace isolation", () => {
     expect((await app.request(`/assets/${asset}`, as(ALICE))).status).toBe(200);
   });
 
+  it("files uploads in their own private folders", async () => {
+    const json = (body: unknown, method = "POST"): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const folderRes = await app.request("/api/asset-folders", as(BOB, json({ name: "Logos" })));
+    expect(folderRes.status).toBe(201);
+    const folder = (await folderRes.json()) as { id: string };
+    expect((await app.request("/api/asset-folders", as(BOB, json({ name: "logos" })))).status).toBe(409);
+    expect((await (await app.request("/api/asset-folders", as(ALICE))).json()) as unknown[]).toEqual([]);
+
+    const upload = async (name: string, folderId?: string) => {
+      const form = new FormData();
+      form.append("file", new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" }));
+      if (folderId) {
+        form.append("folderId", folderId);
+      }
+      return ((await (await app.request("/api/assets", as(BOB, { method: "POST", body: form }))).json()) as { asset: string }).asset;
+    };
+    const inFolder = await upload("in.png", folder.id);
+    const loose = await upload("loose.png");
+    const folderOf = async () => new Map(((await (await app.request("/api/assets", as(BOB))).json()) as { asset: string; folderId?: string }[]).map((info) => [info.asset, info.folderId]));
+    expect(await folderOf()).toEqual(new Map([[inFolder, folder.id], [loose, undefined]]));
+
+    expect((await app.request("/api/assets/move", as(BOB, json({ assets: [loose], folderId: folder.id })))).status).toBe(200);
+    expect((await folderOf()).get(loose)).toBe(folder.id);
+    expect((await app.request("/api/assets/move", as(BOB, json({ assets: [inFolder], folderId: null })))).status).toBe(200);
+    expect((await folderOf()).get(inFolder)).toBeUndefined();
+    // Someone else can't move them, nor into a folder that isn't theirs.
+    expect((await app.request("/api/assets/move", as(ALICE, json({ assets: [loose], folderId: null })))).status).toBe(404);
+    expect((await app.request("/api/assets/move", as(BOB, json({ assets: [loose], folderId: "nope" })))).status).toBe(404);
+
+    // Deleting the folder keeps the uploads, unfiled.
+    expect((await app.request(`/api/asset-folders/${folder.id}`, as(BOB, { method: "DELETE" }))).status).toBe(200);
+    expect((await folderOf()).get(loose)).toBeUndefined();
+    expect((await folderOf()).size).toBe(2);
+  });
+
   it("keeps saved templates private but shares the built-in starters", async () => {
     const created = await app.request("/api/designs", as(ALICE, {
       method: "POST",

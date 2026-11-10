@@ -471,3 +471,207 @@
     min-height: 220px;
   }
 }
+
+/* Upload folders */
+
+.upload-folders {
+  width: 190px;
+  flex: none;
+  overflow-y: auto;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.upload-folders ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.upload-folders li {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.upload-folder-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 30px 7px 9px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.upload-folder-link:hover {
+  background: var(--surface-inner);
+}
+
+.upload-folders li.active .upload-folder-link {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.upload-folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-folders li:not(.active) .upload-folder-link .folder-count {
+  margin-right: 0;
+}
+
+.upload-folder-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.upload-folder-actions .folder-chip-more {
+  position: static;
+}
+
+.upload-folder-actions .folder-chip-menu {
+  top: calc(100% + 4px);
+}
+
+.upload-folders .folder-name-input input,
+.move-menu .folder-name-input input {
+  width: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.upload-folders .folder-name-input {
+  display: flex;
+  width: 100%;
+}
+
+.upload-folder-new {
+  font-size: 12.5px;
+}
+
+.uploads-toolbar .move-menu {
+  right: 0;
+}
+
+.upload-folder-select {
+  width: 100%;
+}
+
+.uploads-panel > .folder-name-input {
+  display: flex;
+}
+
+.uploads-panel > .folder-name-input input {
+  width: 100%;
+  border-radius: var(--radius-sm);
+}
+
+@media (width <= 760px) {
+  .upload-folders {
+    display: none;
+  }
+}
+
+/* Your images (main screen) */
+
+.upload-shelf {
+  margin-top: 28px;
+}
+
+.upload-shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.upload-shelf-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.upload-shelf-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-lift);
+}
+
+.upload-shelf-mosaic {
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-inner);
+  display: grid;
+  gap: 2px;
+}
+
+.upload-shelf-mosaic.count-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.upload-shelf-mosaic.count-3,
+.upload-shelf-mosaic.count-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.upload-shelf-mosaic.count-3 img:first-child {
+  grid-row: span 2;
+}
+
+.upload-shelf-mosaic img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: cover;
+  display: block;
+}
+
+.upload-shelf-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.upload-shelf-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 2px 2px;
+}
+
+.upload-shelf-hint {
+  margin-top: 10px;
+  font-size: 13px;
+}

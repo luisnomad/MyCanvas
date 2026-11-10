@@ -214,11 +214,11 @@ export async function canSeeImages(): Promise<boolean> {
   return sees;
 }
 
-/** Adds a made picture to the person's uploads; resolves to its file name. */
-export async function uploadGenerated(blob: Blob, name: string): Promise<string> {
+/** Adds a made picture to the person's uploads (in an upload folder when given); resolves to its file name. */
+export async function uploadGenerated(blob: Blob, name: string, folderId?: string): Promise<string> {
   const extension = blob.type.includes("jpeg") ? ".jpg" : blob.type.includes("webp") ? ".webp" : ".png";
   const file = new File([blob], `${AI_IMAGE_NAME_PREFIX}${name.slice(0, 60)}${extension}`, { type: blob.type || "image/png" });
-  return (await api.uploadAsset(file)).asset;
+  return (await api.uploadAsset(file, folderId)).asset;
 }
 
 async function browserComfyImage(connection: AiConnection, prompt: string, width: number, height: number): Promise<Blob> {

@@ -18,6 +18,8 @@ export interface AssetInfo {
   /** Produced by an AI tool (cutout / portrait) rather than uploaded by hand. */
   generated: boolean;
   usedIn: AssetUsage[];
+  /** Upload folder; absent = not in a folder. */
+  folderId?: string;
 }
 
 /** Upload names the in-browser AI tools give their results. */
