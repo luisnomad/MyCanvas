@@ -417,25 +417,40 @@ function RolePicker({
       </label>
       {value && connection && connection.kind !== "comfyui" && (
         <label className="field field-wide">
-          <span>
-            Model
-            {state?.state === "loading" && <em>loading…</em>}
-          </span>
-          <input
-            value={value.model}
-            spellCheck={false}
-            list={`ai-models-${role}`}
-            placeholder={connection.kind === "gemini" ? (role === "text" ? "gemini-2.5-flash" : "gemini-2.5-flash-image") : connectionKindInfo(connection.kind)?.defaultImageModel ?? "Model id"}
-            onFocus={() => {
-              if (!state) {
-                onLoadModels(connection.id);
-              }
-            }}
-            onChange={(e) => { onChange({ ...value, model: e.target.value }); }}
-          />
-          <datalist id={`ai-models-${role}`}>
-            {[...listed, ...others].map((model) => <option key={model.id} value={model.id}>{model.label ?? model.id}</option>)}
-          </datalist>
+          <span>Model</span>
+          {state?.state === "error" && !isAccountKind(connection.kind)
+            ? (
+                // The list couldn't load: typing the id keeps the connection usable (account services always list theirs).
+                <input
+                  value={value.model}
+                  spellCheck={false}
+                  placeholder={connection.kind === "gemini" ? (role === "text" ? "gemini-2.5-flash" : "gemini-2.5-flash-image") : connectionKindInfo(connection.kind)?.defaultImageModel ?? "Model id"}
+                  onChange={(e) => { onChange({ ...value, model: e.target.value }); }}
+                />
+              )
+            : (
+                <select
+                  value={value.model}
+                  disabled={state?.state !== "ok"}
+                  onChange={(e) => { onChange({ ...value, model: e.target.value }); }}
+                >
+                  {state?.state !== "ok" && (
+                    <option value={value.model}>
+                      {state?.state === "error" ? value.model || "No models until it connects" : value.model ? `${value.model} (loading models…)` : "Loading models…"}
+                    </option>
+                  )}
+                  {state?.state === "ok" && !value.model && <option value="">Choose a model</option>}
+                  {state?.state === "ok" && value.model && !state.models.some((model) => model.id === value.model) && (
+                    <option value={value.model}>{`${value.model} (not offered any more)`}</option>
+                  )}
+                  {listed.map((model) => <option key={model.id} value={model.id}>{model.label && model.label !== model.id ? `${model.label} (${model.id})` : model.id}</option>)}
+                  {others.length > 0 && (
+                    <optgroup label={role === "text" ? "Image models" : "Text models"}>
+                      {others.map((model) => <option key={model.id} value={model.id}>{model.label && model.label !== model.id ? `${model.label} (${model.id})` : model.id}</option>)}
+                    </optgroup>
+                  )}
+                </select>
+              )}
         </label>
       )}
       {value && connection?.kind === "comfyui" && <p className="muted ai-role-hint">The workflow in this connection decides the model.</p>}
@@ -477,6 +492,13 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     void api.aiSettings().then((settings) => {
       setDraft(toDraft(settings));
+      // The model dropdowns need each chosen connection's list.
+      for (const chosen of new Set([settings.text?.connectionId, settings.image?.connectionId])) {
+        const connection = settings.connections.find((entry) => entry.id === chosen);
+        if (connection && connection.kind !== "comfyui") {
+          loadModelsFor(connection);
+        }
+      }
       for (const connection of settings.connections) {
         if (isAccountKind(connection.kind) && connection.hasKey && !connection.house) {
           loadCredits(connection.id);
@@ -531,16 +553,20 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
 
   const loadModels = (connectionId: string) => {
     const connection = draft?.connections.find((entry) => entry.id === connectionId);
-    if (!connection) {
-      return;
+    if (connection) {
+      loadModelsFor(connection);
     }
+  };
+
+  function loadModelsFor(connection: AiConnectionInput) {
+    const connectionId = connection.id;
     setModels((current) => ({ ...current, [connectionId]: { state: "loading" } }));
     listAiModels(connection)
       .then((list) => { setModels((current) => ({ ...current, [connectionId]: { state: "ok", models: list } })); })
       .catch((reason: unknown) => {
         setModels((current) => ({ ...current, [connectionId]: { state: "error", message: reason instanceof Error ? reason.message : "Couldn't connect" } }));
       });
-  };
+  }
 
   /**
    * Logs in to an account connection: saves first (the server must know the
