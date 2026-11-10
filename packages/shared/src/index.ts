@@ -53,7 +53,7 @@ export type {
   ComfyFluxKleinPreset,
   ComfyWorkflow,
 } from "./ai";
-export { AI_CONNECTION_KINDS, DEFAULT_FLUX_KLEIN } from "./ai";
+export { AI_CONNECTION_KINDS, DEFAULT_FLUX3_KLEIN, DEFAULT_FLUX_KLEIN } from "./ai";
 export { comfyGraph, diffusionSize } from "./comfy";
 export type { BlockDesign, BlockItem, BlockSlots, BlockTheme, BlockVariant, VisualBlockType, VisualPart } from "./blocks";
 export { VISUAL_BLOCK_TYPES, cleanBlockDesign, cleanSlots } from "./blocks";

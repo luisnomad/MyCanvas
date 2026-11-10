@@ -6,6 +6,7 @@ import {
   type AiSettingsInput,
   type ComfyWorkflow,
   AI_CONNECTION_KINDS,
+  DEFAULT_FLUX3_KLEIN,
   DEFAULT_FLUX_KLEIN,
 } from "@mycanvas/shared";
 import { decryptSecret, encryptSecret } from "../secrets";
@@ -108,13 +109,14 @@ function cleanWorkflow(value: unknown): ComfyWorkflow {
   }
   const name = (field: unknown, fallback: string) => (typeof field === "string" && field.trim() ? field.trim().slice(0, 200) : fallback);
   const klein = workflow as Partial<typeof DEFAULT_FLUX_KLEIN> | undefined;
+  const defaults = klein?.preset === "flux3-klein" ? DEFAULT_FLUX3_KLEIN : DEFAULT_FLUX_KLEIN;
   const steps = Number(klein?.steps);
   return {
-    preset: "flux2-klein",
-    unet: name(klein?.unet, DEFAULT_FLUX_KLEIN.unet),
-    textEncoder: name(klein?.textEncoder, DEFAULT_FLUX_KLEIN.textEncoder),
-    vae: name(klein?.vae, DEFAULT_FLUX_KLEIN.vae),
-    steps: Number.isInteger(steps) && steps >= 1 && steps <= 60 ? steps : DEFAULT_FLUX_KLEIN.steps,
+    preset: defaults.preset,
+    unet: name(klein?.unet, defaults.unet),
+    textEncoder: name(klein?.textEncoder, defaults.textEncoder),
+    vae: name(klein?.vae, defaults.vae),
+    steps: Number.isInteger(steps) && steps >= 1 && steps <= 60 ? steps : defaults.steps,
   };
 }
 

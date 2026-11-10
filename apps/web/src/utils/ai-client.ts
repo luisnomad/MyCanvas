@@ -3,7 +3,7 @@ import {
   type AiConnection,
   type AiModelInfo,
   type AiSettings,
-  DEFAULT_FLUX_KLEIN,
+  DEFAULT_FLUX3_KLEIN,
   comfyGraph,
   diffusionSize,
 } from "@mycanvas/shared";
@@ -222,7 +222,7 @@ async function uploadGenerated(blob: Blob, name: string): Promise<string> {
 
 async function browserComfyImage(connection: AiConnection, prompt: string, width: number, height: number, name: string): Promise<string> {
   const size = diffusionSize(width, height);
-  const graph = comfyGraph(connection.workflow ?? DEFAULT_FLUX_KLEIN, prompt, size.width, size.height, Math.floor(Math.random() * 2 ** 31));
+  const graph = comfyGraph(connection.workflow ?? DEFAULT_FLUX3_KLEIN, prompt, size.width, size.height, Math.floor(Math.random() * 2 ** 31));
   const queued = await browserJson<{ prompt_id?: string; error?: { message?: string } }>(connection, "/prompt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

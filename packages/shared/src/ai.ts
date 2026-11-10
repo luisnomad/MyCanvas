@@ -17,9 +17,9 @@ export const AI_CONNECTION_KINDS: { id: AiConnectionKind; label: string; hint: s
   { id: "comfyui", label: "ComfyUI", hint: "Images from your own ComfyUI server, with a preset or your own workflow." },
 ];
 
-/** FLUX.2 klein through ComfyUI: the model files to use (names as on the server). */
+/** FLUX klein (2 or 3) through ComfyUI: the model files to use (names as on the server). */
 export interface ComfyFluxKleinPreset {
-  preset: "flux2-klein";
+  preset: "flux2-klein" | "flux3-klein";
   unet: string;
   textEncoder: string;
   vae: string;
@@ -44,6 +44,15 @@ export const DEFAULT_FLUX_KLEIN: ComfyFluxKleinPreset = {
   textEncoder: "qwen_3_4b.safetensors",
   vae: "flux2-vae.safetensors",
   steps: 4,
+};
+
+/** FLUX 3 klein, distilled int8, as in BFL's ComfyUI workflows. */
+export const DEFAULT_FLUX3_KLEIN: ComfyFluxKleinPreset = {
+  preset: "flux3-klein",
+  unet: "flux3-image-klein-int8-convrot.safetensors",
+  textEncoder: "qwen3vl_4b_bf16.safetensors",
+  vae: "flux2-vae.safetensors",
+  steps: 16,
 };
 
 export interface AiConnection {

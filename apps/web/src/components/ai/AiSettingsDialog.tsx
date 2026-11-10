@@ -7,6 +7,7 @@ import {
   type AiModelInfo,
   type AiSettings,
   type ComfyWorkflow,
+  DEFAULT_FLUX3_KLEIN,
   DEFAULT_FLUX_KLEIN,
 } from "@mycanvas/shared";
 import { api } from "../../api";
@@ -56,7 +57,7 @@ function ConnectionEditor({
   onTest: () => void;
   test: ModelState | undefined;
 }) {
-  const workflow: ComfyWorkflow = connection.workflow ?? DEFAULT_FLUX_KLEIN;
+  const workflow: ComfyWorkflow = connection.workflow ?? DEFAULT_FLUX3_KLEIN;
   const browser = connection.runsIn === "browser";
   const localKey = browser ? browserKey(connection.id) : null;
   const hasKey = browser ? Boolean(localKey) : connection.hasKey === true;
@@ -187,6 +188,15 @@ function ConnectionEditor({
             <button
               type="button"
               role="radio"
+              aria-checked={workflow.preset === "flux3-klein"}
+              className={workflow.preset === "flux3-klein" ? "active" : ""}
+              onClick={() => { onChange({ ...connection, workflow: DEFAULT_FLUX3_KLEIN }); }}
+            >
+              FLUX 3 klein
+            </button>
+            <button
+              type="button"
+              role="radio"
               aria-checked={workflow.preset === "flux2-klein"}
               className={workflow.preset === "flux2-klein" ? "active" : ""}
               onClick={() => { onChange({ ...connection, workflow: DEFAULT_FLUX_KLEIN }); }}
@@ -203,7 +213,7 @@ function ConnectionEditor({
               My workflow
             </button>
           </div>
-          {workflow.preset === "flux2-klein"
+          {workflow.preset !== "custom"
             ? (
                 <div className="ai-grid">
                   {(["unet", "textEncoder", "vae"] as const).map((field) => (
@@ -445,7 +455,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
       id: newId(),
       kind,
       name: kind === "gemini" ? "Google Gemini" : kind === "comfyui" ? "ComfyUI" : "Local LLM",
-      ...(kind === "comfyui" ? { workflow: DEFAULT_FLUX_KLEIN } : {}),
+      ...(kind === "comfyui" ? { workflow: DEFAULT_FLUX3_KLEIN } : {}),
     };
     update({ ...draft, connections: [...draft.connections, connection] });
     setAdding(false);

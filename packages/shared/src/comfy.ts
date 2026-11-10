@@ -36,6 +36,22 @@ export function comfyGraph(workflow: ComfyWorkflow, prompt: string, width: numbe
   if (workflow.preset === "custom") {
     return fillPlaceholders(JSON.parse(workflow.workflow), { prompt, width, height, seed }) as Record<string, unknown>;
   }
+  if (workflow.preset === "flux3-klein") {
+    // BFL's text-to-image graph without the optional prompt upsampler: shift log(16), cfg 1, euler.
+    const shift = Math.log(16);
+    return {
+      1: { class_type: "UNETLoader", inputs: { unet_name: workflow.unet, weight_dtype: "default" } },
+      2: { class_type: "CLIPLoader", inputs: { clip_name: workflow.textEncoder, type: "flux3", device: "default" } },
+      3: { class_type: "VAELoader", inputs: { vae_name: workflow.vae } },
+      4: { class_type: "ModelSamplingFlux", inputs: { model: ["1", 0], max_shift: shift, base_shift: shift, width, height } },
+      5: { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["2", 0] } },
+      6: { class_type: "CLIPTextEncode", inputs: { text: "", clip: ["2", 0] } },
+      7: { class_type: "EmptyFlux2LatentImage", inputs: { width, height, batch_size: 1 } },
+      8: { class_type: "KSampler", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0], seed, steps: workflow.steps, cfg: 1, sampler_name: "euler", scheduler: "simple", denoise: 1 } },
+      9: { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+      10: { class_type: "SaveImage", inputs: { images: ["9", 0], filename_prefix: "mycanvas" } },
+    };
+  }
   return {
     1: { class_type: "UNETLoader", inputs: { unet_name: workflow.unet, weight_dtype: "default" } },
     2: { class_type: "CLIPLoader", inputs: { clip_name: workflow.textEncoder, type: "flux2", device: "default" } },
