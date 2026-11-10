@@ -135,19 +135,76 @@ export interface AiSettingsInput {
   image: AiAssignment | null;
 }
 
+/** What an image model accepts: aspect ratios ("16:9"), output sizes (the service's own names) and transparency. */
+export interface AiImageOptions {
+  ratios: string[];
+  sizes: string[];
+  defaultSize?: string;
+  /** The model can make a transparent background itself. */
+  transparent?: boolean;
+}
+
 export interface AiModelInfo {
   id: string;
   label?: string;
   /** What the model can do, when the provider says. */
   kinds?: ("text" | "image")[];
+  /** Image models: their own ratios and sizes, when the service lists them. */
+  image?: AiImageOptions;
+}
+
+/** Asking for a picture. Without `connectionId` the Images choice in AI settings is used. */
+export interface AiImageRequest {
+  prompt: string;
+  width: number;
+  height: number;
+  name?: string;
+  connectionId?: string;
+  model?: string;
+  /** One of the model's ratios. */
+  ratio?: string;
+  /** One of the model's sizes. */
+  size?: string;
+  /** Ask the model for a transparent background (only when it can make one). */
+  transparent?: boolean;
+  /** false: hold the picture for /api/ai/jobs/:id/image instead of adding it to uploads. */
+  keep?: boolean;
 }
 
 export interface AiImageJob {
   id: string;
   state: "running" | "done" | "error";
-  /** Upload file name once done. */
+  /** Upload file name once done (when kept). */
   asset?: string;
   error?: string;
+}
+
+const COMMON_RATIOS = ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"];
+
+/** Long side in pixels for the sizes MyCanvas offers where a service has no names of its own. */
+export const PIXEL_SIZES: Record<string, number> = { "1K": 1024, "1.5K": 1536, "2K": 2048 };
+
+/**
+ * The ratios and sizes to offer for a model: the service's own list when it
+ * gave one, else what that kind of connection takes.
+ */
+export function imageOptionsFor(kind: AiConnectionKind, model: AiModelInfo | undefined): AiImageOptions {
+  if (model?.image) {
+    return model.image;
+  }
+  if (kind === "gemini") {
+    // Gemini 3 image models take 1K/2K/4K; older ones make about 1K.
+    const sized = /gemini-3|pro-image/i.test(model?.id ?? "");
+    return { ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"], sizes: sized ? ["1K", "2K", "4K"] : [], defaultSize: sized ? "1K" : undefined };
+  }
+  return { ratios: COMMON_RATIOS, sizes: Object.keys(PIXEL_SIZES), defaultSize: "1K" };
+}
+
+/** Width and height for a ratio ("16:9") with the long side `longSide` pixels. */
+export function ratioSize(ratio: string, longSide: number): { width: number; height: number } {
+  const [w = 1, h = 1] = ratio.split(":").map(Number);
+  const scale = longSide / Math.max(w, h);
+  return { width: Math.round(w * scale), height: Math.round(h * scale) };
 }
 
 /** Logging in to an account connection: open `url` (and, for some services, confirm `code`). */

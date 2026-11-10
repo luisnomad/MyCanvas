@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type AiImageJob, type AiSettingsInput, AI_IMAGE_NAME_PREFIX, isAccountKind } from "@mycanvas/shared";
+import { type AiImageJob, type AiImageRequest, type AiSettingsInput, AI_IMAGE_NAME_PREFIX, isAccountKind } from "@mycanvas/shared";
 import { type Hono } from "hono";
 import { saveAsset } from "../assets-store";
 import { type Identity, knownAccounts } from "../auth";
@@ -13,16 +13,21 @@ import { AiSettingsError, readAiSettings, resolveConnection, saveAiSettings } fr
 interface AppEnv { Variables: { ws: Workspace; identity: Identity } }
 
 /** Image jobs in memory: they take seconds to minutes, longer than a proxied request may wait. */
-const jobs = new Map<string, AiImageJob & { workspace: string; finishedAt?: number }>();
+type Job = AiImageJob & { workspace: string; finishedAt?: number; held?: { bytes: Buffer; extension: string } };
+const jobs = new Map<string, Job>();
 
 function pruneJobs() {
-  const cutoff = Date.now() - 60 * 60_000;
+  const now = Date.now();
   for (const [id, job] of jobs) {
-    if (job.finishedAt !== undefined && job.finishedAt < cutoff) {
+    // Pictures not added to uploads are held briefly: long enough to look at and accept.
+    const keepFor = job.held ? 30 * 60_000 : 60 * 60_000;
+    if (job.finishedAt !== undefined && job.finishedAt < now - keepFor) {
       jobs.delete(id);
     }
   }
 }
+
+const IMAGE_TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp" };
 
 /** Errors people can act on become 400 with the message; anything else is a 500. */
 function failure(error: unknown): { message: string; status: 400 | 500 | 503 } {
@@ -34,6 +39,13 @@ function failure(error: unknown): { message: string; status: 400 | 500 | 503 } {
   }
   console.error("AI request failed", error);
   return { message: "Something went wrong talking to the AI provider.", status: 500 };
+}
+
+/** A connection picked for one request (the image maker's own choice), checked like the assigned one. */
+async function chosenConnection(ws: Workspace, email: string, connectionId: string, model: string) {
+  const { connection, apiKey } = await resolveConnection(ws, connectionId, email);
+  await checkNetworkAccess(connection, email);
+  return { connection, apiKey, model };
 }
 
 async function assignment(ws: Workspace, email: string, role: "text" | "image") {
@@ -100,36 +112,51 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     }
   });
 
-  /** Starts an image job; poll /api/ai/jobs/:id. The result lands in the person's uploads. */
+  /**
+   * Starts an image job; poll /api/ai/jobs/:id. The result lands in the
+   * person's uploads, or with `keep: false` waits at /api/ai/jobs/:id/image
+   * until the person decides to use it.
+   */
   app.post("/api/ai/image", async (c) => {
     const ws = c.get("ws");
     let resolved;
-    let body: { prompt?: string; width?: number; height?: number; name?: string };
+    let body: Partial<AiImageRequest>;
     try {
       body = await c.req.json<typeof body>();
       if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 8000) {
         return c.json({ error: "Missing or oversized prompt." }, 400);
       }
-      resolved = await assignment(ws, c.get("identity").email, "image");
+      const email = c.get("identity").email;
+      resolved = typeof body.connectionId === "string" && body.connectionId
+        ? await chosenConnection(ws, email, body.connectionId, typeof body.model === "string" ? body.model.slice(0, 200) : "")
+        : await assignment(ws, email, "image");
     } catch (error) {
       const { message, status } = failure(error);
       return c.json({ error: message }, status);
     }
     pruneJobs();
     const id = randomUUID();
-    const job: AiImageJob & { workspace: string; finishedAt?: number } = { id, state: "running", workspace: ws.key };
+    const job: Job = { id, state: "running", workspace: ws.key };
     jobs.set(id, job);
     const width = Math.min(4096, Math.max(64, Math.round(Number(body.width) || 1024)));
     const height = Math.min(4096, Math.max(64, Math.round(Number(body.height) || 1024)));
     const prompt = body.prompt.trim();
     const label = (typeof body.name === "string" && body.name.trim() ? body.name.trim() : prompt).slice(0, 60);
+    const ratio = typeof body.ratio === "string" && /^\d+(\.\d+)?:\d+(\.\d+)?$/.test(body.ratio) ? body.ratio : undefined;
+    const size = typeof body.size === "string" && /^[\w.]{1,12}$/.test(body.size) ? body.size : undefined;
+    const request = { prompt, width, height, ratio, size, transparent: body.transparent === true };
+    const keep = body.keep !== false;
     const { connection, apiKey, model } = resolved;
     const make = isAccountKind(connection.kind)
-      ? accountImage(ws, connection, apiKey, model, { prompt, width, height })
-      : generateImage(connection, apiKey, model, { prompt, width, height });
+      ? accountImage(ws, connection, apiKey, model, request)
+      : generateImage(connection, apiKey, model, request);
     void make
       .then(async (image) => {
-        job.asset = await saveAsset(ws, image.bytes, image.extension, `${AI_IMAGE_NAME_PREFIX}${label}${image.extension}`);
+        if (keep) {
+          job.asset = await saveAsset(ws, image.bytes, image.extension, `${AI_IMAGE_NAME_PREFIX}${label}${image.extension}`);
+        } else {
+          job.held = image;
+        }
         job.state = "done";
       })
       .catch((error: unknown) => {
@@ -147,8 +174,20 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     if (job?.workspace !== c.get("ws").key) {
       return c.json({ error: "Not found" }, 404);
     }
-    const { workspace: _workspace, finishedAt: _finishedAt, ...visible } = job;
+    const { workspace: _workspace, finishedAt: _finishedAt, held: _held, ...visible } = job;
     return c.json(visible);
+  });
+
+  /** A finished picture that wasn't added to uploads (`keep: false`). */
+  app.get("/api/ai/jobs/:id/image", (c) => {
+    const job = jobs.get(c.req.param("id"));
+    if (job?.workspace !== c.get("ws").key || !job.held) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    return c.body(new Uint8Array(job.held.bytes), 200, {
+      "Content-Type": IMAGE_TYPES[job.held.extension] ?? "application/octet-stream",
+      "Cache-Control": "private, no-store",
+    });
   });
 
   /** Account connections (Kling, Runway, PixVerse): start a login; the browser opens the address. */

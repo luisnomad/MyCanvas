@@ -3,6 +3,7 @@ import {
   type AiLoginStart,
   type AiLoginStatus,
   type AiImageJob,
+  type AiImageRequest,
   type AiModelInfo,
   type AiSettings,
   type AiSettingsInput,
@@ -139,9 +140,16 @@ export const api = {
   aiStatus: () => request<{ text: boolean; image: boolean }>("/api/ai/status"),
   aiText: (input: { system: string; prompt: string; json?: boolean; temperature?: number; images?: string[] }) =>
     request<{ text: string; model: string; connection: string }>("/api/ai/text", jsonInit("POST", input)),
-  startAiImage: (input: { prompt: string; width: number; height: number; name?: string }) =>
-    request<AiImageJob>("/api/ai/image", jsonInit("POST", input)),
+  startAiImage: (input: AiImageRequest) => request<AiImageJob>("/api/ai/image", jsonInit("POST", input)),
   aiJob: (id: string) => request<AiImageJob>(`/api/ai/jobs/${encodeURIComponent(id)}`),
+  /** A finished picture started with `keep: false`. */
+  aiJobImage: async (id: string) => {
+    const res = await fetch(`/api/ai/jobs/${encodeURIComponent(id)}/image`);
+    if (!res.ok) {
+      throw new ApiError(res.status, res.status === 404 ? "The picture is no longer available. Make it again." : res.statusText);
+    }
+    return res.blob();
+  },
   /** Account connections: start a login (open `url`), then poll its state. */
   aiLogin: (connectionId: string) => request<AiLoginStart>("/api/ai/login", jsonInit("POST", { connectionId })),
   aiLoginStatus: (id: string) => request<AiLoginStatus>(`/api/ai/login/${encodeURIComponent(id)}`),

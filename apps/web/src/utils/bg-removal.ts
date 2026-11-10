@@ -394,3 +394,48 @@ export async function textBehindSubject(layer: ImageLayer, options: { outline?: 
   };
   store.addLayerAt(cutout, insertAt);
 }
+
+/**
+ * Removes the background of a picture that isn't on the page yet (an AI
+ * picture before it's used). The mask is found at a working size and
+ * applied to the full-size picture, so a 4K picture stays 4K.
+ */
+export async function cutoutPicture(blob: Blob, onProgress: (progress: number | null) => void = () => undefined): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob);
+  const fullW = bitmap.width;
+  const fullH = bitmap.height;
+  const downscale = Math.min(1, MAX_INPUT_PX / Math.max(fullW, fullH));
+  const work = document.createElement("canvas");
+  work.width = Math.max(1, Math.round(fullW * downscale));
+  work.height = Math.max(1, Math.round(fullH * downscale));
+  const workCtx = work.getContext("2d");
+  const full = document.createElement("canvas");
+  full.width = fullW;
+  full.height = fullH;
+  const fullCtx = full.getContext("2d");
+  if (!workCtx || !fullCtx) {
+    bitmap.close();
+    throw new Error("No 2d context");
+  }
+  workCtx.drawImage(bitmap, 0, 0, work.width, work.height);
+  fullCtx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  let mask: Blob;
+  try {
+    mask = await runWorker(workCtx.getImageData(0, 0, work.width, work.height), onProgress);
+  } catch (error) {
+    throw error instanceof NoSubjectError ? new Error("Couldn't find a subject to keep in this picture.") : error;
+  }
+  const maskBitmap = await createImageBitmap(mask);
+  fullCtx.globalCompositeOperation = "destination-in";
+  fullCtx.imageSmoothingQuality = "high";
+  fullCtx.drawImage(maskBitmap, 0, 0, fullW, fullH);
+  maskBitmap.close();
+  const result = await new Promise<Blob | null>((resolve) => {
+    full.toBlob(resolve, "image/png");
+  });
+  if (!result) {
+    throw new Error("Couldn't save the cut-out picture.");
+  }
+  return result;
+}

@@ -223,6 +223,12 @@ export interface ImageRequest {
   prompt: string;
   width: number;
   height: number;
+  /** A ratio the model lists ("16:9"); else the nearest to width:height. */
+  ratio?: string;
+  /** A size the model lists ("2K", "1440p"); else the service's default. */
+  size?: string;
+  /** Ask for a transparent background (models that can). */
+  transparent?: boolean;
 }
 
 export interface GeneratedImage {
@@ -307,7 +313,13 @@ export async function generateImage(connection: AiConnection, apiKey: string | u
         timeoutMs: 300_000,
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: request.prompt }] }],
-          generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: nearestRatio(request.width, request.height) } },
+          generationConfig: {
+            responseModalities: ["IMAGE"],
+            imageConfig: {
+              aspectRatio: request.ratio && GEMINI_RATIOS.includes(request.ratio) ? request.ratio : nearestRatio(request.width, request.height),
+              ...(request.size && /^[124]K$/.test(request.size) ? { imageSize: request.size } : {}),
+            },
+          },
         }),
       }),
     );

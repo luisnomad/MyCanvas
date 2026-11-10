@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import path from "node:path";
-import { type AiAccountKind, type AiConnection, type AiCredits, type AiLoginStart, type AiLoginStatus, type AiModelInfo, type AiSettings } from "@mycanvas/shared";
+import { type AiAccountKind, type AiConnection, type AiCredits, type AiImageOptions, type AiLoginStart, type AiLoginStatus, type AiModelInfo, type AiSettings } from "@mycanvas/shared";
 import { encryptSecret } from "../secrets";
 import { type Workspace, dataDir, readJsonFile, writeJsonFile } from "../storage";
 import { AiSettingsError } from "./errors";
@@ -619,6 +619,40 @@ const KLING_RATIOS = ["9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "21:9"]
 const RUNWAY_RATIOS = ["9:16", "3:4", "1:1", "4:3", "16:9", "21:9"];
 /** Runway models that need a source image or don't make a raster picture. */
 const RUNWAY_SKIP = /vector|precise-edit|fibo-edit|image-turbo/;
+const RUNWAY_WIDE = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"];
+/** What Runway's image models accept (from its generate_image tool); others get the safe ratios and its default size. */
+const RUNWAY_MODELS: Record<string, Partial<AiImageOptions>> = {
+  "nano-banana-pro": { ratios: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"], sizes: ["1K", "2K", "4K"] },
+  "nano-banana-2.1": { ratios: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "9:21", "4:1", "1:4"], sizes: ["1K", "2K", "4K"] },
+  "nano-banana-2": { ratios: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "4:1", "1:4"], sizes: ["1K", "2K", "4K"] },
+  "nano-banana-2-lite": { ratios: RUNWAY_WIDE, sizes: [] },
+  "gpt-image-2": { ratios: RUNWAY_WIDE, sizes: [], transparent: true },
+  "gpt-image-2.5-flare": { ratios: RUNWAY_WIDE, sizes: ["1K", "2K", "4K"] },
+  "gpt-image-2.5-sunburst": { ratios: RUNWAY_WIDE, sizes: ["1K", "2K", "4K"], transparent: true },
+  "seedream-5": { sizes: ["2K", "3K"], defaultSize: "2K" },
+  "seedream-5-pro": { sizes: ["1K", "2K"], defaultSize: "2K", transparent: true },
+  "seedream-5-flash": { sizes: ["1K", "2K"], transparent: true },
+  "grok-imagine-image-2": { sizes: ["1K", "2K"] },
+  "ideogram-4.5": { sizes: ["1K", "2K"], defaultSize: "2K" },
+  "p-image-ideogram": { sizes: ["1K", "2K"] },
+  "fibo-1.5": { sizes: ["1K", "4K"] },
+};
+
+function runwayOptions(model: string): AiImageOptions {
+  const spec = RUNWAY_MODELS[model] ?? {};
+  const sizes = spec.sizes ?? [];
+  return { ratios: spec.ratios ?? RUNWAY_RATIOS, sizes, defaultSize: spec.defaultSize ?? sizes[0], transparent: spec.transparent };
+}
+
+/** The size to send: the one asked for when the model lists it, else the model's default. */
+function pickSize(options: AiImageOptions, wanted: string | undefined): string | undefined {
+  return wanted && options.sizes.includes(wanted) ? wanted : options.defaultSize;
+}
+
+/** The ratio to send: the one asked for when the model lists it, else the nearest to width:height. */
+function pickRatio(ratios: readonly string[], request: ImageRequest): string {
+  return request.ratio && ratios.includes(request.ratio) ? request.ratio : nearestRatio(request.width, request.height, ratios);
+}
 
 /* -------------------------------------------------------------------- */
 /* PixVerse                                                             */
@@ -666,47 +700,68 @@ async function pixverseCall<T>(connection: AiConnection, endpoint: string, token
 const WIDE = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2", "21:9"];
 const PORTRAIT = ["1:1", "16:9", "9:16", "4:3", "3:4", "5:4", "4:5", "3:2", "2:3", "21:9"];
 const KLING_PX = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9"];
-const PIXVERSE_MODELS: { id: string; label: string; quality: string; ratios: string[] }[] = [
-  { id: "gpt-image-2.5-flare", label: "GPT Image 2.5 Flare", quality: "1080p", ratios: WIDE },
-  { id: "gpt-image-2.5-sunburst", label: "GPT Image 2.5 Sunburst", quality: "1080p", ratios: WIDE },
-  { id: "gpt-image-2.0", label: "GPT Image 2", quality: "1080p", ratios: WIDE },
-  { id: "gemini-3.1-flash", label: "Nano Banana 2", quality: "1080p", ratios: PORTRAIT },
-  { id: "gemini-3.1-flash-lite", label: "Nano Banana 2 Lite", quality: "1080p", ratios: PORTRAIT },
-  { id: "gemini-3.0", label: "Nano Banana Pro", quality: "1080p", ratios: PORTRAIT },
-  { id: "gemini-2.5-flash", label: "Nano Banana", quality: "1080p", ratios: PORTRAIT },
-  { id: "qwen-image", label: "Qwen Image", quality: "1080p", ratios: PORTRAIT },
-  { id: "seedream-5.0-pro", label: "Seedream 5.0 Pro", quality: "1080p", ratios: PORTRAIT },
-  { id: "seedream-5.0-lite", label: "Seedream 5.0 Lite", quality: "1440p", ratios: PORTRAIT },
-  { id: "seedream-4.5", label: "Seedream 4.5", quality: "1440p", ratios: PORTRAIT },
-  { id: "seedream-4.0", label: "Seedream 4.0", quality: "1080p", ratios: PORTRAIT },
-  { id: "kling-image-o3", label: "Kling Image O3", quality: "1080p", ratios: KLING_PX },
-  { id: "kling-image-v3", label: "Kling Image 3", quality: "1080p", ratios: KLING_PX },
+const HD = ["1080p", "1440p", "2160p"];
+const PIXVERSE_MODELS: { id: string; label: string; quality: string; qualities: string[]; ratios: string[] }[] = [
+  { id: "gpt-image-2.5-flare", label: "GPT Image 2.5 Flare", quality: "1080p", qualities: HD, ratios: WIDE },
+  { id: "gpt-image-2.5-sunburst", label: "GPT Image 2.5 Sunburst", quality: "1080p", qualities: HD, ratios: WIDE },
+  { id: "gpt-image-2.0", label: "GPT Image 2", quality: "1080p", qualities: HD, ratios: WIDE },
+  { id: "gemini-3.1-flash", label: "Nano Banana 2", quality: "1080p", qualities: ["512p", ...HD], ratios: PORTRAIT },
+  { id: "gemini-3.1-flash-lite", label: "Nano Banana 2 Lite", quality: "1080p", qualities: ["1080p"], ratios: PORTRAIT },
+  { id: "gemini-3.0", label: "Nano Banana Pro", quality: "1080p", qualities: HD, ratios: PORTRAIT },
+  { id: "gemini-2.5-flash", label: "Nano Banana", quality: "1080p", qualities: ["1080p"], ratios: PORTRAIT },
+  { id: "qwen-image", label: "Qwen Image", quality: "1080p", qualities: ["720p", "1080p"], ratios: PORTRAIT },
+  { id: "seedream-5.0-pro", label: "Seedream 5.0 Pro", quality: "1080p", qualities: ["1080p", "1440p"], ratios: PORTRAIT },
+  { id: "seedream-5.0-lite", label: "Seedream 5.0 Lite", quality: "1440p", qualities: ["1440p", "1800p", "2160p"], ratios: PORTRAIT },
+  { id: "seedream-4.5", label: "Seedream 4.5", quality: "1440p", qualities: ["1440p", "2160p"], ratios: PORTRAIT },
+  { id: "seedream-4.0", label: "Seedream 4.0", quality: "1080p", qualities: HD, ratios: PORTRAIT },
+  { id: "kling-image-o3", label: "Kling Image O3", quality: "1080p", qualities: HD, ratios: KLING_PX },
+  { id: "kling-image-v3", label: "Kling Image 3", quality: "1080p", qualities: ["1080p", "1440p"], ratios: KLING_PX },
 ];
 
 /* -------------------------------------------------------------------- */
 /* What the routes call                                                 */
 /* -------------------------------------------------------------------- */
 
+interface KlingModel {
+  model: string;
+  alias?: string;
+  arguments?: { name: string; default?: string; allowedValues?: string[] }[];
+}
+
+/** Kling lists each model's arguments: its resolutions and ratios ("auto" left out: MyCanvas sends a ratio). */
+function klingOptions(model: KlingModel): AiImageOptions {
+  const argument = (name: string) => model.arguments?.find((entry) => entry.name === name);
+  const sizes = argument("img_resolution")?.allowedValues ?? ["1k", "2k"];
+  const ratios = (argument("aspect_ratio")?.allowedValues ?? KLING_RATIOS).filter((ratio) => ratio !== "auto");
+  // 1k costs least; the person can pick more.
+  return { ratios, sizes, defaultSize: sizes.includes("1k") ? "1k" : argument("img_resolution")?.default ?? sizes[0] };
+}
+
 export async function accountModels(ws: Workspace, connection: AiConnection, raw: string | undefined): Promise<AiModelInfo[]> {
   switch (connection.kind) {
     case "kling":
       return withMcp(ws, connection, raw, async (session) => {
         const answer = await session.call("who_am_i", { tools: ["text_to_image"] }) as {
-          availableModels?: { text_to_image?: { defaultModel?: string; models?: { model: string; alias?: string }[] } };
+          availableModels?: { text_to_image?: { defaultModel?: string; models?: KlingModel[] } };
         };
         const tool = answer.availableModels?.text_to_image;
         const models = [...(tool?.models ?? [])].sort((a, b) => Number(b.model === tool?.defaultModel) - Number(a.model === tool?.defaultModel));
-        return models.map((model) => ({ id: model.model, label: model.alias?.split(",")[0]?.trim() ?? model.model, kinds: ["image"] }));
+        return models.map((model) => ({ id: model.model, label: model.alias?.split(",")[0]?.trim() ?? model.model, kinds: ["image"], image: klingOptions(model) }));
       });
     case "runway":
       return withMcp(ws, connection, raw, async (session) => {
         const answer = await session.call("whoami", { rationale: "List the image models this workspace can run, for MyCanvas's AI settings." }) as { availableImageModels?: string[] };
-        return (answer.availableImageModels ?? []).filter((id) => !RUNWAY_SKIP.test(id)).map((id) => ({ id, kinds: ["image"] }));
+        return (answer.availableImageModels ?? []).filter((id) => !RUNWAY_SKIP.test(id)).map((id) => ({ id, kinds: ["image"], image: runwayOptions(id) }));
       });
     case "pixverse":
       // Checks the login too.
       await accountCredits(ws, connection, raw);
-      return PIXVERSE_MODELS.map((model) => ({ id: model.id, label: model.label, kinds: ["image"] }));
+      return PIXVERSE_MODELS.map((model) => ({
+        id: model.id,
+        label: model.label,
+        kinds: ["image"],
+        image: { ratios: model.ratios, sizes: model.qualities, defaultSize: model.quality },
+      }));
     default:
       throw new AiSettingsError(`${connection.name} isn't an account connection.`);
   }
@@ -747,8 +802,8 @@ export async function accountImage(ws: Workspace, connection: AiConnection, raw:
           model: model || "kling-image-v3_0_omni",
           arguments: [
             { name: "prompt", value: request.prompt },
-            { name: "aspect_ratio", value: nearestRatio(request.width, request.height, KLING_RATIOS) },
-            { name: "img_resolution", value: "1k" },
+            { name: "aspect_ratio", value: pickRatio(request.ratio ? [request.ratio] : KLING_RATIOS, request) },
+            { name: "img_resolution", value: request.size && /^\d+(\.\d+)?k$/.test(request.size) ? request.size : "1k" },
           ],
           rationale: "A picture for a page the person is designing in MyCanvas, asked for from its page panel or design builder.",
           taskTraceId: trace,
@@ -763,11 +818,14 @@ export async function accountImage(ws: Workspace, connection: AiConnection, raw:
     }
     case "runway": {
       const url = await withMcp(ws, connection, raw, async (session) => {
+        const options = runwayOptions(model || "nano-banana-2.1");
+        const size = pickSize(options, request.size);
         const started = await session.call("generate_image", {
           promptText: request.prompt,
           model: model || "nano-banana-2.1",
-          ratio: nearestRatio(request.width, request.height, RUNWAY_RATIOS),
-          imageSize: "1K",
+          ratio: pickRatio(options.ratios, request),
+          ...(size ? { imageSize: size } : {}),
+          ...(request.transparent && options.transparent ? { transparentBackground: true } : {}),
           count: 1,
           // "Make another picture" with the same words is a new picture, not the earlier one.
           confirmRepeat: true,
@@ -788,9 +846,9 @@ export async function accountImage(ws: Workspace, connection: AiConnection, raw:
       const started = await pixverseCall<unknown>(connection, "image/t2i", token, {
         prompt: request.prompt,
         model: spec?.id ?? model,
-        quality: spec?.quality ?? "1080p",
+        quality: request.size && spec?.qualities.includes(request.size) ? request.size : spec?.quality ?? "1080p",
         create_count: 1,
-        aspect_ratio: nearestRatio(request.width, request.height, spec?.ratios ?? WIDE),
+        aspect_ratio: pickRatio(spec?.ratios ?? WIDE, request),
         seed: randomInt(1, 2 ** 31),
       });
       const id = findString(started, /^image_?ids?$/i);

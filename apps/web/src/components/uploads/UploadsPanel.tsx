@@ -1,6 +1,7 @@
 import { type DragEvent, useCallback, useMemo, useRef, useState } from "react";
 import { type AssetInfo } from "@mycanvas/shared";
 import { useEditorStore } from "../../store/editorStore";
+import { AiImageDialog } from "./AiImageDialog";
 import { AssetTile, type TileAction } from "./AssetTile";
 import { DeleteAssetsDialog } from "./DeleteAssetsDialog";
 import { ASSET_FILTERS, type AssetFilter, UPLOAD_ACCEPT, filterAssets, loadAssetSize, useAssetLibrary } from "./library";
@@ -19,6 +20,7 @@ export function UploadsPanel() {
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [pendingDelete, setPendingDelete] = useState<AssetInfo[] | null>(null);
   const [managerOpen, setManagerOpen] = useState(false);
+  const [makerOpen, setMakerOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -84,6 +86,13 @@ export function UploadsPanel() {
         </svg>
         Upload images
       </button>
+      <button type="button" className="secondary block uploads-ai" onClick={() => { setMakerOpen(true); }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" />
+          <path d="M19 15l.8 1.9 1.9.8-1.9.8L19 20.4l-.8-1.9-1.9-.8 1.9-.8z" />
+        </svg>
+        Make with AI
+      </button>
       {error && <p className="form-error">{error}</p>}
       <div className="uploads-panel-tools">
         <input
@@ -144,6 +153,7 @@ export function UploadsPanel() {
           }}
         />
       )}
+      {makerOpen && <AiImageDialog onClose={() => { setMakerOpen(false); }} onPlace={place} />}
       {managerOpen && <UploadsManager onClose={() => { setManagerOpen(false); }} onPlace={place} />}
     </div>
   );

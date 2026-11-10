@@ -214,13 +214,14 @@ export async function canSeeImages(): Promise<boolean> {
   return sees;
 }
 
-async function uploadGenerated(blob: Blob, name: string): Promise<string> {
+/** Adds a made picture to the person's uploads; resolves to its file name. */
+export async function uploadGenerated(blob: Blob, name: string): Promise<string> {
   const extension = blob.type.includes("jpeg") ? ".jpg" : blob.type.includes("webp") ? ".webp" : ".png";
   const file = new File([blob], `${AI_IMAGE_NAME_PREFIX}${name.slice(0, 60)}${extension}`, { type: blob.type || "image/png" });
   return (await api.uploadAsset(file)).asset;
 }
 
-async function browserComfyImage(connection: AiConnection, prompt: string, width: number, height: number, name: string): Promise<string> {
+async function browserComfyImage(connection: AiConnection, prompt: string, width: number, height: number): Promise<Blob> {
   const size = diffusionSize(width, height);
   const graph = comfyGraph(connection.workflow ?? DEFAULT_FLUX3_KLEIN, prompt, size.width, size.height, Math.floor(Math.random() * 2 ** 31));
   const queued = await browserJson<{ prompt_id?: string; error?: { message?: string } }>(connection, "/prompt", {
@@ -246,43 +247,78 @@ async function browserComfyImage(connection: AiConnection, prompt: string, width
     const image = Object.values(entry?.outputs ?? {}).flatMap((output) => output.images ?? []).find((candidate) => candidate.type === "output");
     if (image) {
       const view = await browserFetch(connection, `/view?${new URLSearchParams({ filename: image.filename, subfolder: image.subfolder, type: image.type }).toString()}`);
-      return uploadGenerated(await view.blob(), name);
+      return view.blob();
     }
   }
   throw new Error(`${connection.name} took longer than 10 minutes.`);
 }
 
-/** Runs the image model chosen in AI settings; resolves to the new upload's file name. */
-export async function aiImage(prompt: string, size: { width: number; height: number }, name: string): Promise<string> {
-  const choice = await assigned("image");
+/** AI settings as last loaded (connections and the Text/Images choices). */
+export function cachedAiSettings(): Promise<AiSettings> {
+  settingsCache ??= api.aiSettings();
+  return settingsCache;
+}
+
+export interface ImageAsk {
+  prompt: string;
+  /** Wanted width and height (the ratio when none is given; pixels for servers that take sizes). */
+  width: number;
+  height: number;
+  name?: string;
+  /** A connection and model other than the Images choice in AI settings. */
+  choice?: { connection: AiConnection; model: string };
+  ratio?: string;
+  size?: string;
+  /** Ask the model for a transparent background (only models that can). */
+  transparent?: boolean;
+}
+
+/** Makes a picture and hands it back without adding it to uploads. */
+export async function aiImageBlob(ask: ImageAsk): Promise<Blob> {
+  const choice = ask.choice ?? await assigned("image");
   if (choice?.connection.runsIn === "browser") {
     const { connection, model } = choice;
     if (connection.kind === "comfyui") {
-      return browserComfyImage(connection, prompt, size.width, size.height, name);
+      return browserComfyImage(connection, ask.prompt, ask.width, ask.height);
     }
-    const snapped = diffusionSize(size.width, size.height);
+    const snapped = diffusionSize(ask.width, ask.height);
     const body = await browserJson<{ data?: { b64_json?: string }[] }>(connection, "/images/generations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, n: 1, size: `${String(snapped.width)}x${String(snapped.height)}`, response_format: "b64_json" }),
+      body: JSON.stringify({ model, prompt: ask.prompt, n: 1, size: `${String(snapped.width)}x${String(snapped.height)}`, response_format: "b64_json" }),
     });
     const b64 = body.data?.[0]?.b64_json;
     if (!b64) {
       throw new Error(`${connection.name} returned no image.`);
     }
-    return uploadGenerated(await (await fetch(`data:image/png;base64,${b64}`)).blob(), name);
+    return (await fetch(`data:image/png;base64,${b64}`)).blob();
   }
-  const job = await api.startAiImage({ prompt, width: size.width, height: size.height, name });
+  const job = await api.startAiImage({
+    prompt: ask.prompt,
+    width: ask.width,
+    height: ask.height,
+    name: ask.name,
+    ...(ask.choice ? { connectionId: ask.choice.connection.id, model: ask.choice.model } : {}),
+    ratio: ask.ratio,
+    size: ask.size,
+    transparent: ask.transparent,
+    keep: false,
+  });
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     const state = await api.aiJob(job.id);
-    if (state.state === "done" && state.asset) {
-      return state.asset;
+    if (state.state === "done") {
+      return api.aiJobImage(job.id);
     }
     if (state.state === "error") {
       throw new Error(state.error ?? "Image generation failed");
     }
   }
   throw new Error("The image took too long.");
+}
+
+/** Runs the image model chosen in AI settings; resolves to the new upload's file name. */
+export async function aiImage(prompt: string, size: { width: number; height: number }, name: string): Promise<string> {
+  return uploadGenerated(await aiImageBlob({ prompt, width: size.width, height: size.height, name }), name);
 }
