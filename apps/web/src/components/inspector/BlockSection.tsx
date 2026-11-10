@@ -50,7 +50,7 @@ export function BlockSection() {
   }
 
   /** Redraws the given parts (with canvas edits read back) under a new block record. Reads the editor's current state, so it's safe after a slow step. */
-  const redraw = async (next: BlockDesign, partIds: Set<string>) => {
+  const redraw = async (next: BlockDesign, partIds: Set<string>, slotsReady = new Set<string>()) => {
     const state = useEditorStore.getState();
     const current = state.design;
     if (!current?.blocks) {
@@ -63,7 +63,11 @@ export function BlockSection() {
       const order = pages.map((page) => page.id);
       const edited = partsWithEdits(current.blocks, pages);
       // Edits made on the canvas are in the old record's slots; keep the new block/variant.
+      // Parts in `slotsReady` already carry those edits plus a change of their own (a new picture).
       const parts = next.parts.map((entry) => {
+        if (slotsReady.has(entry.id)) {
+          return entry;
+        }
         const before = edited.find((candidate) => candidate.id === entry.id);
         return before?.block === entry.block ? { ...entry, slots: before.slots } : entry;
       });
@@ -90,7 +94,7 @@ export function BlockSection() {
     void import("../../utils/blocks/render").then(({ readSlots }) => {
       const current = page ? { ...target, slots: readSlots(target, page.layers) } : target;
       const nextPart = change(current);
-      void redraw({ ...now, parts: now.parts.map((entry) => (entry.id === partId ? nextPart : entry)) }, new Set([partId]));
+      void redraw({ ...now, parts: now.parts.map((entry) => (entry.id === partId ? nextPart : entry)) }, new Set([partId]), new Set([partId]));
     });
   };
 
