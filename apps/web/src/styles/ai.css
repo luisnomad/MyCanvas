@@ -116,6 +116,18 @@
   font-size: 12px;
 }
 
+.ai-account-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.ai-account-row > span {
+  flex: 1 1 12rem;
+}
+
 .ai-add {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

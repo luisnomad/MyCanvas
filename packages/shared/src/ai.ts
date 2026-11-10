@@ -5,17 +5,47 @@
  * whether one is set.
  */
 
-export type AiConnectionKind = "gemini" | "openai" | "comfyui";
+export type AiConnectionKind = "gemini" | "openai" | "comfyui" | "kling" | "runway" | "pixverse";
 
-export const AI_CONNECTION_KINDS: { id: AiConnectionKind; label: string; hint: string }[] = [
+/** Cloud services reached with the owner's own account (log in once; no API key). */
+export type AiAccountKind = "kling" | "runway" | "pixverse";
+
+export interface AiConnectionKindInfo {
+  id: AiConnectionKind;
+  label: string;
+  hint: string;
+  /** Makes images only. */
+  imagesOnly?: boolean;
+  /** Signed in with an account instead of a key; only the owner can add these. */
+  account?: boolean;
+  /** Suggested image model. */
+  defaultImageModel?: string;
+}
+
+export const AI_CONNECTION_KINDS: AiConnectionKindInfo[] = [
   { id: "gemini", label: "Google Gemini", hint: "Text and images with a Google AI Studio API key." },
   {
     id: "openai",
     label: "OpenAI-compatible",
     hint: "llama.cpp, vLLM, Ollama, LM Studio, OpenRouter or OpenAI: any server with the /v1 chat API.",
   },
-  { id: "comfyui", label: "ComfyUI", hint: "Images from your own ComfyUI server, with a preset or your own workflow." },
+  { id: "comfyui", label: "ComfyUI", hint: "Images from your own ComfyUI server, with a preset or your own workflow.", imagesOnly: true },
+  { id: "kling", label: "Kling", hint: "Images with your Kling account and its credits. Log in once.", imagesOnly: true, account: true, defaultImageModel: "kling-image-v3_0_omni" },
+  { id: "runway", label: "Runway", hint: "Images with your Runway account and its credits. Log in once.", imagesOnly: true, account: true, defaultImageModel: "nano-banana-2.1" },
+  { id: "pixverse", label: "PixVerse", hint: "Images with your PixVerse account and its credits. Log in once (every 30 days).", imagesOnly: true, account: true, defaultImageModel: "gpt-image-2.5-flare" },
 ];
+
+export function connectionKindInfo(kind: AiConnectionKind): AiConnectionKindInfo | undefined {
+  return AI_CONNECTION_KINDS.find((entry) => entry.id === kind);
+}
+
+export function isAccountKind(kind: AiConnectionKind): kind is AiAccountKind {
+  return connectionKindInfo(kind)?.account === true;
+}
+
+export function isImagesOnlyKind(kind: AiConnectionKind): boolean {
+  return connectionKindInfo(kind)?.imagesOnly === true;
+}
 
 /** FLUX klein (2 or 3) through ComfyUI: the model files to use (names as on the server). */
 export interface ComfyFluxKleinPreset {
@@ -80,6 +110,8 @@ export interface AiConnection {
   hasKey?: boolean;
   /** Set by the server: last 4 characters of the stored key, for recognition. */
   keyHint?: string;
+  /** Set by the server, account kinds: when the login was made and when it runs out (ISO dates). */
+  account?: { connectedAt: string; expiresAt?: string };
 }
 
 export interface AiAssignment {
@@ -116,4 +148,23 @@ export interface AiImageJob {
   /** Upload file name once done. */
   asset?: string;
   error?: string;
+}
+
+/** Logging in to an account connection: open `url` (and, for some services, confirm `code`). */
+export interface AiLoginStart {
+  id: string;
+  url: string;
+  code?: string;
+}
+
+export interface AiLoginStatus {
+  state: "waiting" | "done" | "error";
+  error?: string;
+}
+
+export interface AiCredits {
+  /** Credits left, when the service says. */
+  credits: number | null;
+  /** Plan or membership name, when known. */
+  plan?: string;
 }

@@ -41,11 +41,16 @@ export { PLATFORM_SIZES } from "./templates";
 export type { FontVariant } from "./font-style";
 export { FONT_WEIGHTS, formatFontStyle, isBoldWeight, parseFontStyle } from "./font-style";
 export type {
+  AiAccountKind,
   AiAssignment,
   AiConnection,
   AiConnectionInput,
   AiConnectionKind,
+  AiConnectionKindInfo,
+  AiCredits,
   AiImageJob,
+  AiLoginStart,
+  AiLoginStatus,
   AiModelInfo,
   AiSettings,
   AiSettingsInput,
@@ -53,7 +58,7 @@ export type {
   ComfyFluxKleinPreset,
   ComfyWorkflow,
 } from "./ai";
-export { AI_CONNECTION_KINDS, DEFAULT_FLUX3_KLEIN, DEFAULT_FLUX_KLEIN } from "./ai";
+export { AI_CONNECTION_KINDS, DEFAULT_FLUX3_KLEIN, DEFAULT_FLUX_KLEIN, connectionKindInfo, isAccountKind, isImagesOnlyKind } from "./ai";
 export { comfyGraph, diffusionSize } from "./comfy";
 export type { BlockDesign, BlockItem, BlockSlots, BlockTheme, BlockVariant, VisualBlockType, VisualPart } from "./blocks";
 export { VISUAL_BLOCK_TYPES, cleanBlockDesign, cleanSlots } from "./blocks";

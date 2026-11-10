@@ -118,6 +118,8 @@ export async function listModels(connection: AiConnection, apiKey?: string): Pro
       const body = await json<string[]>(connection, await call(connection, `${base(connection)}/models/diffusion_models`));
       return body.map((id) => ({ id, kinds: ["image"] }));
     }
+    default:
+      throw new ProviderError(`${connection.name} signs in with an account; its models come from the account.`);
   }
 }
 

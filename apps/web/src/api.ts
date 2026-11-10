@@ -1,4 +1,7 @@
 import {
+  type AiCredits,
+  type AiLoginStart,
+  type AiLoginStatus,
   type AiImageJob,
   type AiModelInfo,
   type AiSettings,
@@ -139,6 +142,10 @@ export const api = {
   startAiImage: (input: { prompt: string; width: number; height: number; name?: string }) =>
     request<AiImageJob>("/api/ai/image", jsonInit("POST", input)),
   aiJob: (id: string) => request<AiImageJob>(`/api/ai/jobs/${encodeURIComponent(id)}`),
+  /** Account connections: start a login (open `url`), then poll its state. */
+  aiLogin: (connectionId: string) => request<AiLoginStart>("/api/ai/login", jsonInit("POST", { connectionId })),
+  aiLoginStatus: (id: string) => request<AiLoginStatus>(`/api/ai/login/${encodeURIComponent(id)}`),
+  aiCredits: (connectionId: string) => request<AiCredits>("/api/ai/credits", jsonInit("POST", { connectionId })),
   systemFonts: () => request<string[]>("/api/fonts/system"),
   getFontFavorites: () => request<{ googleFontFavorites: string[] }>("/api/fonts/favorites"),
   setFontFavorites: (favorites: string[]) =>

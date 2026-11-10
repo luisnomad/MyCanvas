@@ -8,6 +8,8 @@ import {
   AI_CONNECTION_KINDS,
   DEFAULT_FLUX3_KLEIN,
   DEFAULT_FLUX_KLEIN,
+  isAccountKind,
+  isImagesOnlyKind,
 } from "@mycanvas/shared";
 import { decryptSecret, encryptSecret } from "../secrets";
 import { AiSettingsError } from "./errors";
@@ -23,7 +25,7 @@ const MAX_WORKFLOW_BYTES = 256 * 1024;
 
 export { AiSettingsError } from "./errors";
 
-function secretContext(ws: Workspace, connectionId: string): string {
+export function secretContext(ws: Workspace, connectionId: string): string {
   return `ai-key:${ws.key}:${connectionId}`;
 }
 
@@ -41,7 +43,7 @@ async function houseConnections(email: string): Promise<AiConnection[]> {
   const owner = await workspaceFor(LOCAL_USER);
   const stored = await readJsonFile<AiSettings>(owner.aiFile);
   return (stored?.connections ?? [])
-    .filter((connection) => connection.shared === true && connection.runsIn !== "browser")
+    .filter((connection) => connection.shared === true && connection.runsIn !== "browser" && !isAccountKind(connection.kind))
     .map((connection) => ({ id: `${HOUSE_PREFIX}${connection.id}`, kind: connection.kind, name: connection.name, house: true }));
 }
 
@@ -129,6 +131,13 @@ function cleanConnection(input: AiConnectionInput, owner: boolean): AiConnection
   }
   const name = typeof input.name === "string" ? input.name.trim().slice(0, 80) : "";
   const connection: AiConnection = { id: input.id, kind: input.kind, name: name || input.kind };
+  if (isAccountKind(input.kind)) {
+    // The owner's paid accounts: never offered to anyone else.
+    if (!owner) {
+      throw new AiSettingsError("Only the owner can connect cloud accounts.");
+    }
+    return connection;
+  }
   if (input.kind !== "gemini") {
     connection.baseUrl = cleanBaseUrl(input.baseUrl);
     connection.allowSelfSigned = input.allowSelfSigned === true;
@@ -153,8 +162,8 @@ function cleanAssignment(value: AiAssignment | null, connections: AiConnection[]
   if (!connection) {
     throw new AiSettingsError(`The ${role} connection doesn't exist.`);
   }
-  if (role === "text" && connection.kind === "comfyui") {
-    throw new AiSettingsError("ComfyUI makes images; choose another connection for text.");
+  if (role === "text" && isImagesOnlyKind(connection.kind)) {
+    throw new AiSettingsError(`${connection.name} makes images; choose another connection for text.`);
   }
   const model = typeof value.model === "string" ? value.model.trim().slice(0, 200) : "";
   if (!model && connection.kind !== "comfyui") {
@@ -191,6 +200,15 @@ export async function saveAiSettings(ws: Workspace, input: AiSettingsInput, emai
       throw new AiSettingsError("Duplicate connection id.");
     }
     const existingSecret = secrets[connection.id];
+    if (isAccountKind(connection.kind)) {
+      // Logins are stored by the login flow; saving keeps them, or removes them (log out).
+      if (raw.apiKey !== null && existingSecret) {
+        nextSecrets[connection.id] = existingSecret;
+        connection.account = previous?.connections.find((entry) => entry.id === connection.id)?.account;
+      }
+      connections.push(connection);
+      continue;
+    }
     if (connection.runsIn === "browser") {
       // Keys for tools on the person's computer stay in their browser.
       connections.push(connection);
@@ -238,6 +256,9 @@ export async function resolveConnection(ws: Workspace, connectionId: string, ema
   const settings = await readJsonFile<AiSettings>(ws.aiFile);
   const connection = settings?.connections.find((entry) => entry.id === connectionId);
   if (!connection) {
+    throw new AiSettingsError("That connection doesn't exist.");
+  }
+  if (isAccountKind(connection.kind) && !isOwner(email)) {
     throw new AiSettingsError("That connection doesn't exist.");
   }
   if (connection.runsIn === "browser") {

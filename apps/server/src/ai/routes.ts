@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { type AiImageJob, type AiSettingsInput, AI_IMAGE_NAME_PREFIX } from "@mycanvas/shared";
+import { type AiImageJob, type AiSettingsInput, AI_IMAGE_NAME_PREFIX, isAccountKind } from "@mycanvas/shared";
 import { type Hono } from "hono";
 import { saveAsset } from "../assets-store";
 import { type Identity, knownAccounts } from "../auth";
 import { SecretsUnavailableError } from "../secrets";
 import { type Workspace } from "../storage";
+import { accountCredits, accountImage, accountModels, finishOAuthLogin, loginStatus, startLogin } from "./accounts";
 import { checkNetworkAccess, isOwner, readAdminSettings, saveAdminSettings } from "./network";
 import { ProviderError, generateImage, generateText, listModels } from "./providers";
 import { AiSettingsError, readAiSettings, resolveConnection, saveAiSettings } from "./settings";
@@ -63,6 +64,9 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     try {
       const { connectionId } = await c.req.json<{ connectionId: string }>();
       const { connection, apiKey } = await resolveConnection(c.get("ws"), connectionId, c.get("identity").email);
+      if (isAccountKind(connection.kind)) {
+        return c.json({ models: await accountModels(c.get("ws"), connection, apiKey) });
+      }
       await checkNetworkAccess(connection, c.get("identity").email);
       return c.json({ models: await listModels(connection, apiKey) });
     } catch (error) {
@@ -119,7 +123,11 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     const height = Math.min(4096, Math.max(64, Math.round(Number(body.height) || 1024)));
     const prompt = body.prompt.trim();
     const label = (typeof body.name === "string" && body.name.trim() ? body.name.trim() : prompt).slice(0, 60);
-    void generateImage(resolved.connection, resolved.apiKey, resolved.model, { prompt, width, height })
+    const { connection, apiKey, model } = resolved;
+    const make = isAccountKind(connection.kind)
+      ? accountImage(ws, connection, apiKey, model, { prompt, width, height })
+      : generateImage(connection, apiKey, model, { prompt, width, height });
+    void make
       .then(async (image) => {
         job.asset = await saveAsset(ws, image.bytes, image.extension, `${AI_IMAGE_NAME_PREFIX}${label}${image.extension}`);
         job.state = "done";
@@ -141,6 +149,68 @@ export function registerAiRoutes(app: Hono<AppEnv>): void {
     }
     const { workspace: _workspace, finishedAt: _finishedAt, ...visible } = job;
     return c.json(visible);
+  });
+
+  /** Account connections (Kling, Runway, PixVerse): start a login; the browser opens the address. */
+  app.post("/api/ai/login", async (c) => {
+    try {
+      const { connectionId } = await c.req.json<{ connectionId: string }>();
+      const ws = c.get("ws");
+      const email = c.get("identity").email;
+      const { connection } = await resolveConnection(ws, connectionId, email);
+      if (!isAccountKind(connection.kind)) {
+        return c.json({ error: `${connection.name} uses a key, not a login.` }, 400);
+      }
+      // The page's own address, so the service sends the browser back to where it came from.
+      const origin = c.req.header("origin") ?? new URL(c.req.url).origin;
+      return c.json(await startLogin(ws, email, connection, origin));
+    } catch (error) {
+      const { message, status } = failure(error);
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.get("/api/ai/login/:id", (c) => {
+    const status = loginStatus(c.req.param("id"), c.get("ws"));
+    return status ? c.json(status) : c.json({ error: "Not found" }, 404);
+  });
+
+  /** Where Kling and Runway send the browser back after the person approves. */
+  app.get("/api/ai/oauth/callback", async (c) => {
+    let title = "Logged in";
+    let message = "You can close this tab and go back to MyCanvas.";
+    try {
+      const login = await finishOAuthLogin(c.req.query("state") ?? "", c.req.query("code"), c.req.query("error"), c.get("identity").email);
+      if (login.state === "error") {
+        title = "Login failed";
+        message = login.error ?? "The login failed.";
+      } else {
+        title = `Logged in to ${login.connection.name}`;
+      }
+    } catch (error) {
+      title = "Login failed";
+      message = failure(error).message;
+    }
+    const escape = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${String(ch.charCodeAt(0))};`);
+    return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)}</title>` +
+      `<style>body{font:16px system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f5f2;color:#222}main{max-width:28rem;padding:2rem}@media(prefers-color-scheme:dark){body{background:#1d1d1f;color:#eee}}</style>` +
+      `</head><body><main><h1>${escape(title)}</h1><p>${escape(message)}</p></main><script>setTimeout(function(){window.close()},1500)</script></body></html>`);
+  });
+
+  /** Credits left on an account connection. */
+  app.post("/api/ai/credits", async (c) => {
+    try {
+      const { connectionId } = await c.req.json<{ connectionId: string }>();
+      const ws = c.get("ws");
+      const { connection, apiKey } = await resolveConnection(ws, connectionId, c.get("identity").email);
+      if (!isAccountKind(connection.kind)) {
+        return c.json({ error: `${connection.name} doesn't report credits.` }, 400);
+      }
+      return c.json(await accountCredits(ws, connection, apiKey));
+    } catch (error) {
+      const { message, status } = failure(error);
+      return c.json({ error: message }, status);
+    }
   });
 
   /** Owner only: which accounts may use the server's local network for AI. */
