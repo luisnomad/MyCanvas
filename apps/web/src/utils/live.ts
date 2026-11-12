@@ -12,12 +12,13 @@ export type LiveEvent =
   | { type: "design.updated"; id: string; revision: number; by: "agent" | "human"; clientId: string | null }
   | { type: "design.created"; id: string; folderId?: string; by: "agent" | "human"; clientId: string | null }
   | { type: "design.deleted"; id: string; by: "agent" | "human"; clientId: string | null }
+  | { type: "design.thumbnail"; id: string }
   | { type: "lock.changed"; id: string; lock: DesignLock | null }
   | { type: "assets.changed" }
   | { type: "fonts.changed" }
   | { type: "reconnected" };
 
-const EVENT_TYPES = ["design.updated", "design.created", "design.deleted", "lock.changed", "assets.changed", "fonts.changed"];
+const EVENT_TYPES = ["design.updated", "design.created", "design.deleted", "design.thumbnail", "lock.changed", "assets.changed", "fonts.changed"];
 
 type Handler = (event: LiveEvent) => void;
 

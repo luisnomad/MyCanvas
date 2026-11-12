@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Editor } from "./screens/Editor";
+import { Headless } from "./screens/Headless";
 import { ProjectList } from "./screens/ProjectList";
 import { ALL_DESIGNS, folderViewFromHash } from "./utils/folders";
 import { shouldHoldNavigation } from "./utils/leave-guard";
@@ -33,6 +34,9 @@ export default function App() {
   const editMatch = /^#\/edit\/(.+)$/.exec(hash);
   const editId = editMatch?.[1];
 
+  if (hash === "#/headless") {
+    return <Headless />;
+  }
   if (editId) {
     return <Editor key={editId} designId={editId} />;
   }

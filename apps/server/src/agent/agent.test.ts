@@ -113,6 +113,8 @@ beforeAll(async () => {
   process.env.MYCANVAS_WEB_DIST = path.join(dataDir, "no-web");
   process.env.MYCANVAS_LOCAL_USER = OWNER;
   process.env.MYCANVAS_AGENT_TOKEN = TOKEN;
+  // No Chromium in unit tests (render endpoints are checked against a dev server).
+  process.env.MYCANVAS_RENDERER = "off";
   ({ app } = await import("../app"));
   locks = await import("../locks");
 });
@@ -393,5 +395,39 @@ describe("event stream", () => {
     expect(text).toContain("event: lock.changed");
     expect(text).toMatch(/event: design.updated\ndata: \{[^\n]*"by":"agent"/);
     await reader.cancel();
+  });
+});
+
+describe("source files", () => {
+  it("stores PDFs and Office files apart from Uploads, and serves them to the renderer", async () => {
+    const form = new FormData();
+    form.set("file", new File(["%PDF-1.7 test"], "example.pdf", { type: "application/pdf" }));
+    const res = await app.request(`${BASE}/sources`, agent({ method: "POST", body: form }));
+    expect(res.status).toBe(201);
+    const source = (await res.json()) as { source: string; name: string };
+    expect(source.name).toBe("example.pdf");
+    const listed = (await (await app.request(`${BASE}/sources`, agent())).json()) as { source: string }[];
+    expect(listed.map((entry) => entry.source)).toContain(source.source);
+    const uploads = (await (await app.request(`${BASE}/assets`, agent())).json()) as { asset: string }[];
+    expect(uploads.map((entry) => entry.asset)).not.toContain(source.source);
+    const served = await app.request(`/api/sources/${source.source}`, editor());
+    expect(served.headers.get("content-type")).toBe("application/pdf");
+    expect(await served.text()).toBe("%PDF-1.7 test");
+    expect((await app.request("/api/sources/..%2Fsecret.pdf", editor())).status).toBe(404);
+  });
+
+  it("refuses other file types", async () => {
+    const form = new FormData();
+    form.set("file", new File(["x"], "tool.exe"));
+    expect((await app.request(`${BASE}/sources`, agent({ method: "POST", body: form }))).status).toBe(400);
+  });
+
+  it("checks document and import input before using the renderer", async () => {
+    expect((await app.request(`${BASE}/documents`, agent({ method: "POST", json: { markdown: "# Hi" } }))).status).toBe(400);
+    expect((await app.request(`${BASE}/documents`, agent({ method: "POST", json: { formatId: "nope", markdown: "# Hi" } }))).status).toBe(404);
+    expect((await app.request(`${BASE}/content/import`, agent({ method: "POST", json: { source: "missing.pdf" } }))).status).toBe(404);
+    expect((await app.request(`${BASE}/designs/nope/render`, agent())).status).toBe(404);
+    const design = await newDesign();
+    expect((await app.request(`${BASE}/designs/${design.id}/render?scale=9`, agent())).status).toBe(400);
   });
 });

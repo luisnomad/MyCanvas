@@ -1,7 +1,7 @@
 # MyCanvas agent API — v1 spec
 
-Status: **decisions settled (2026-11-12). Steps 1 (core) and 2 (editor live
-mode) built on branch `agent-api`; steps 3–7 to do.** See
+Status: **decisions settled (2026-11-12). Steps 1 (core), 2 (editor live
+mode) and 3 (renderer) built on branch `agent-api`; steps 4–7 to do.** See
 "Decisions" at the end.
 
 ## Goal
@@ -200,10 +200,19 @@ window.mycanvasHeadless = {
   spell pays the start-up (about 1–2 s, estimate); later renders only
   wait for drawing, fonts and images. Images and fonts it has loaded once
   stay in the page's cache.
-- After agent writes, the server also re-renders the page-1 thumbnail
-  (debounced 3 s) so the project list shows Claude's work.
-- Docker: the runtime image gains Chromium (`npx playwright install --with-deps
-  chromium`, about +400 MB). nmd-srvr has room (371 GB disk free, 15 GiB RAM
+- After agent writes, the server also re-renders the previews of the pages
+  that changed (debounced 3 s, up to 12 pages) so the project list shows
+  Claude's work. Previews are stored without a new revision, so an open
+  editor's next save isn't refused because of them (`design.thumbnail`
+  event).
+- Driver: `playwright-core` 1.60.0 (pinned; its Chromium build 1223 is
+  already cached on the Mac). Settings: `MYCANVAS_RENDER_URL` (where the page
+  loads the app; default `http://127.0.0.1:$PORT`, in dev
+  `http://localhost:5173`), `MYCANVAS_CHROMIUM` (a Chromium binary, optional),
+  `MYCANVAS_RENDERER=off` (no renderer, e.g. unit tests).
+- Docker: the runtime image gains the Chromium headless shell
+  (`playwright-core install --with-deps --only-shell chromium`, roughly
+  +300–400 MB; not built yet, Docker isn't running on the Mac). nmd-srvr has room (371 GB disk free, 15 GiB RAM
   available). In local dev the server uses the Chromium Playwright already
   installed on the Mac.
 - **Runs inside the app container** (decided: the faster option). The
@@ -286,8 +295,11 @@ type Position = "top" | "bottom" | number | { above: string } | { below: string 
 | GET | `/designs/:id/export.pdf` | every page, same PDF export as the editor |
 | GET | `/designs/:id/export.zip?format=png&scale=2` | every page as images |
 
-`scale` is 0.25–3 as in the export dialog. Typical render time is about
-0.5–2 s once Chromium is warm (estimate, measured during the build).
+`scale` is 0.1–3. Measured on the Mac (1200×628 design): first render
+after a quiet spell about 2 s, then about 0.1 s; a 2-page PDF about 0.6 s.
+`render` lists fonts the renderer lacks in `X-MyCanvas-Missing-Fonts`;
+`layout` returns `{ width, height, layers: [{ id, name, type, x, y, width,
+height, outside }], missingFonts }`.
 
 ### Documents from Markdown
 
@@ -309,8 +321,10 @@ match "Format from example…" and "Import a file" in the editor.
 
 | method | path | what |
 |---|---|---|
-| POST | `/formats/from-example` | `{ asset, name?, folderId?, describe? }` → new format from the PDF's first pages: page size, background art, fonts and weights, text colours, spacing, callout boxes, image sample. `describe: true` also writes the format's AI instructions (needs the text model, which may be offline; then it's skipped and said so). Returns the format and its warnings (e.g. fonts with stand-ins) |
-| POST | `/content/import` | `{ asset, pagePerPage? }` → `{ markdown, warnings, stats }` from a PDF, DOCX, PPTX or Markdown upload: headings, leads, lists, quotes, tables; embedded images go to Uploads. Claude reviews or edits the Markdown before laying it out |
+| POST | `/sources` | multipart `file` (PDF, DOCX, PPTX, MD, TXT, up to 50 MB) → `{ source, name, size }` |
+| GET | `/sources` | source files uploaded so far |
+| POST | `/formats/from-example` | `{ source, name?, folderId?, describe? }` → new format from the PDF's first pages: page size, background art, fonts and weights, text colours, spacing, callout boxes, image sample. `describe: true` also writes the format's AI instructions (needs the text model, which may be offline; then it's skipped and said so). Returns the format and its warnings (e.g. fonts with stand-ins) |
+| POST | `/content/import` | `{ source, pagePerPage? }` → `{ markdown, summary, warnings }` from a PDF, DOCX, PPTX or Markdown source: headings, leads, lists, quotes, tables; embedded images go to Uploads. Claude reviews or edits the Markdown before laying it out |
 | POST | `/documents` | as above, with that Markdown and any format |
 
 So a full flow is: upload the client's PDF → `formats/from-example` (style) →
@@ -333,11 +347,11 @@ subsets missing most characters.
 | POST | `/assets/move` | `{ assets, folderId }` |
 
 - Images: png, jpg, webp, gif, svg, up to 25 MB, as today.
-- **Source files: PDF, DOCX, PPTX, Markdown** (up to 50 MB). Stored in
-  Uploads as attachments (a file card in the drawer, not placeable on the
-  canvas) for the "Pages from PDFs" endpoints above. They are not split into
-  page images. In the editor, "Format from example…" and "Import a file" can
-  pick them from Uploads as well as from disk.
+- **Source files (PDF, DOCX, PPTX, Markdown)** go to `POST /sources`, kept
+  apart from Uploads (which only holds pictures to place) in
+  `/data/users/<owner>/sources/`. They are read by the "Pages from PDFs"
+  endpoints above and never split into page images. Later: show them in the
+  editor so "Format from example…" and "Import a file" can pick them too.
 - Uploads from the agent appear in Luis's Uploads drawer at once
   (`assets.changed`).
 

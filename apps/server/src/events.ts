@@ -14,6 +14,8 @@ export type WorkspaceEvent =
   | { type: "design.updated"; id: string; revision: number; by: Actor; clientId: string | null }
   | { type: "design.created"; id: string; folderId?: string; by: Actor; clientId: string | null }
   | { type: "design.deleted"; id: string; by: Actor; clientId: string | null }
+  /** A fresh preview was stored (no new revision). */
+  | { type: "design.thumbnail"; id: string }
   | { type: "lock.changed"; id: string; lock: unknown }
   | { type: "assets.changed" }
   | { type: "fonts.changed" };

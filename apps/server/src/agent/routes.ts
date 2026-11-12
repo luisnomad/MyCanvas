@@ -25,6 +25,7 @@ import { imageSize } from "../image-size";
 import { type DesignLock, acquireLock, getLock, releaseLock, serialized, wasTakenFromAgent } from "../locks";
 import { isSafeId, newId, workspaceFor } from "../storage";
 import { OpError, applyOps, assetsIn } from "./ops";
+import { registerRenderRoutes, scheduleThumbnails } from "./render-routes";
 
 /*
  * The agent API (docs/AGENT_API.md): Claude creates and edits designs in the
@@ -139,6 +140,7 @@ export function registerAgentRoutes(app: Hono<AppEnv>, helpers: AgentHelpers): v
     }
     await acquireLock(ws, result.design.id, "agent", agentLabel(c));
     publish(ws, { type: "design.created", id: result.design.id, folderId: result.design.folderId, by: "agent", clientId: null });
+    scheduleThumbnails(ws, result.design.id);
     return c.json(withoutThumbnails(result.design), 201);
   });
 
@@ -187,6 +189,7 @@ export function registerAgentRoutes(app: Hono<AppEnv>, helpers: AgentHelpers): v
       }
       const stored = await writeDesign(ws, { ...changed, updatedAt: new Date().toISOString() }, existing);
       publish(ws, { type: "design.updated", id, revision: stored.revision ?? 0, by: "agent", clientId: null });
+      scheduleThumbnails(ws, id);
       return c.json(respond(stored));
     });
   }
@@ -327,4 +330,5 @@ export function registerAgentRoutes(app: Hono<AppEnv>, helpers: AgentHelpers): v
   });
 
   registerAssetFolderRoutes(app, helpers.isSafeAssetFile, AGENT_BASE);
+  registerRenderRoutes(app);
 }

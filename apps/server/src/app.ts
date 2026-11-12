@@ -21,6 +21,7 @@ import { registerAiRoutes } from "./ai/routes";
 import { assetFolderIndex, forgetAsset, placeAssets, registerAssetFolderRoutes } from "./asset-folders";
 import { assetUsageIndex } from "./asset-usage";
 import { readAssetManifest, saveAsset } from "./assets-store";
+import { registerSourceFileRoute } from "./agent/render-routes";
 import { registerAgentRoutes } from "./agent/routes";
 import { type Identity, identify } from "./auth";
 import {
@@ -650,6 +651,7 @@ app.put("/api/fonts/favorites", async (c) => {
 registerAiRoutes(app);
 registerAssetFolderRoutes(app, isSafeAssetFile);
 registerAgentRoutes(app, { isSafeAssetFile, listAssets });
+registerSourceFileRoute(app);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 

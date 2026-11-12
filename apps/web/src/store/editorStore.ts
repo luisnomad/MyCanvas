@@ -212,6 +212,12 @@ export interface EditorStore {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveInFlight = false;
+/** The server's headless renderer: it only reads and draws, never saves or locks. */
+let headless = false;
+
+export function setHeadlessMode(on: boolean): void {
+  headless = on;
+}
 let saveAgain = false;
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -339,6 +345,9 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
    * housekeeping saves (a missing preview) never lock.
    */
   const markDirty = (edit = true) => {
+    if (headless) {
+      return;
+    }
     if (edit && get().lock?.holder !== "human") {
       requestLock();
     }
