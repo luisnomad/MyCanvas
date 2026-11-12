@@ -2,13 +2,22 @@ import { useEffect, useState } from "react";
 import { Editor } from "./screens/Editor";
 import { ProjectList } from "./screens/ProjectList";
 import { ALL_DESIGNS, folderViewFromHash } from "./utils/folders";
+import { shouldHoldNavigation } from "./utils/leave-guard";
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(() => window.location.hash);
 
   useEffect(() => {
+    let current = window.location.hash;
     const onHashChange = () => {
-      setHash(window.location.hash);
+      const next = window.location.hash;
+      if (next !== current && shouldHoldNavigation(next)) {
+        // Stay put while the editor asks how to leave (see leave-guard.ts).
+        window.history.replaceState(null, "", current === "" ? window.location.pathname : current);
+        return;
+      }
+      current = next;
+      setHash(next);
     };
     window.addEventListener("hashchange", onHashChange);
     return () => {

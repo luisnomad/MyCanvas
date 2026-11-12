@@ -1,4 +1,5 @@
 import path from "node:path";
+import { type DesignLock } from "@mycanvas/shared";
 import { type Actor, publish } from "./events";
 import { type Workspace, readJsonFile, writeJsonFile } from "./storage";
 
@@ -8,15 +9,7 @@ import { type Workspace, readJsonFile, writeJsonFile } from "./storage";
  * locks are kept on disk (locks.json in the workspace) to survive restarts.
  */
 
-export interface DesignLock {
-  designId: string;
-  holder: Actor;
-  /** "Claude" or the person's email. */
-  label: string;
-  /** Whose lock it is (for the agent: the workspace owner it works for). */
-  email: string;
-  since: string;
-}
+export type { DesignLock };
 
 export type LockResult =
   | { ok: true; lock: DesignLock; changed: boolean }

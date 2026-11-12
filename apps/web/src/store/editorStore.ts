@@ -1,6 +1,7 @@
 import {
   type BlockDesign,
   type Design,
+  type DesignLock,
   type DesignPage,
   type DocumentSource,
   type FormatAiInstructions,
@@ -105,6 +106,21 @@ export interface EditorStore {
 
   loadDesign: (id: string) => Promise<void>;
   unload: () => void;
+  /** Unsaved changes made by this person (not just a pending preview refresh). */
+  unsavedEdits: boolean;
+  /** Who is editing the open design: null = nobody (anyone's first edit locks it). */
+  lock: DesignLock | null;
+  setLock: (lock: DesignLock | null) => void;
+  /** Takes the design back from Claude. */
+  takeOver: () => Promise<void>;
+  /** Saves pending changes, then releases this person's lock. Resolves true when unlocked. */
+  unlock: () => Promise<boolean>;
+  /**
+   * Brings in a newer version saved elsewhere (Claude or another tab):
+   * keeps the open page and selection where they still exist, clears undo
+   * history. `message` is shown as a toast.
+   */
+  syncFromServer: (message?: string) => Promise<void>;
   /** Replace the selection (group-aware: a member selects its whole group). */
   selectLayer: (id: string | null) => void;
   /** Shift-click toggle (group-aware). */
@@ -195,6 +211,8 @@ export interface EditorStore {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saveInFlight = false;
+let saveAgain = false;
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** In-app layer clipboard (z-order preserved; shared across designs). */
@@ -315,7 +333,18 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
     markDirty();
   };
 
-  const markDirty = () => {
+  /**
+   * Marks unsaved changes and schedules the autosave. A real edit (`edit`,
+   * the default) also locks the design to this person on the first change;
+   * housekeeping saves (a missing preview) never lock.
+   */
+  const markDirty = (edit = true) => {
+    if (edit && get().lock?.holder !== "human") {
+      requestLock();
+    }
+    if (edit && !get().unsavedEdits) {
+      set({ unsavedEdits: true });
+    }
     if (get().saveStatus !== "dirty") {
       set({ saveStatus: "dirty" });
     }
@@ -325,6 +354,32 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
     saveTimer = setTimeout(() => {
       void get().saveNow();
     }, AUTOSAVE_DELAY_MS);
+  };
+
+  let lockRequest: Promise<void> | null = null;
+
+  /** Locks the open design to this person (first edit). */
+  const requestLock = () => {
+    const design = get().design;
+    if (!design || lockRequest) {
+      return;
+    }
+    lockRequest = api.lockDesign(design.id)
+      .then((lock) => {
+        if (get().design?.id === design.id) {
+          set({ lock });
+        }
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 423 && get().design?.id === design.id) {
+          const lock = (error.body as { lock?: DesignLock } | undefined)?.lock ?? null;
+          set({ lock });
+          get().showToast(`${lock?.label ?? "Claude"} is editing this design, so your change can't be saved.`);
+        }
+      })
+      .finally(() => {
+        lockRequest = null;
+      });
   };
 
   const pushHistory = () => {
@@ -392,7 +447,14 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         editingTextLayerId: null,
         editingFrameId: null,
         contextMenu: null,
+        lock: null,
+        unsavedEdits: false,
       });
+      void api.getLock(id).then((lock) => {
+        if (get().design?.id === id || get().loadStatus === "loading") {
+          set({ lock });
+        }
+      }).catch(() => undefined);
       try {
         const design = normalizeDesign(await api.getDesign(id));
         design.pages = design.pages.map((page) => ({ ...page, layers: page.layers.map(migrateTextEffect) }));
@@ -410,8 +472,9 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
           }
           setTimeout(() => {
             const state = get();
-            if (state.design?.id === id && state.activePageId === firstPageId && !state.design.pages[0]?.thumbnail) {
-              markDirty();
+            // Not while Claude holds the lock: it couldn't be saved anyway.
+            if (state.design?.id === id && state.activePageId === firstPageId && !state.design.pages[0]?.thumbnail && state.lock?.holder !== "agent") {
+              markDirty(false);
             }
           }, 1500);
         });
@@ -440,7 +503,94 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         pendingSnapshot: null,
         editingTextLayerId: null,
         editingFrameId: null,
+        lock: null,
+        unsavedEdits: false,
       });
+    },
+
+    lock: null,
+    unsavedEdits: false,
+
+    setLock: (lock) => {
+      set({ lock });
+    },
+
+    takeOver: async () => {
+      const design = get().design;
+      if (!design) {
+        return;
+      }
+      try {
+        const lock = await api.takeOverDesign(design.id);
+        set({ lock });
+      } catch {
+        get().showToast("Couldn't take the design over. Check the connection and try again.");
+      }
+    },
+
+    unlock: async () => {
+      const design = get().design;
+      if (!design) {
+        return false;
+      }
+      get().commitTransient();
+      await get().saveNow();
+      if (get().saveStatus !== "saved") {
+        get().showToast("Your last changes aren't saved yet, so the design stays locked.");
+        return false;
+      }
+      try {
+        await api.unlockDesign(design.id);
+        set({ lock: null });
+        return true;
+      } catch {
+        get().showToast("Couldn't unlock the design. Check the connection and try again.");
+        return false;
+      }
+    },
+
+    syncFromServer: async (message) => {
+      const current = get().design;
+      if (!current) {
+        return;
+      }
+      let fresh: Design;
+      try {
+        fresh = normalizeDesign(await api.getDesign(current.id));
+      } catch {
+        return;
+      }
+      const state = get();
+      if (state.design?.id !== current.id) {
+        return;
+      }
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      fresh.pages = fresh.pages.map((page) => ({ ...page, layers: page.layers.map(migrateTextEffect) }));
+      const pageId = fresh.pages.some((page) => page.id === state.activePageId) ? state.activePageId : fresh.pages[0]?.id ?? "";
+      const next = withActivePage(fresh, pageId);
+      const ids = new Set(next.layers.map((layer) => layer.id));
+      set({
+        design: next,
+        activePageId: pageId,
+        saveStatus: "saved",
+        unsavedEdits: false,
+        selectedLayerIds: state.selectedLayerIds.filter((id) => ids.has(id)),
+        editingGroupId: state.editingGroupId && next.layers.some((layer) => layer.groupId === state.editingGroupId) ? state.editingGroupId : null,
+        editingTextLayerId: state.editingTextLayerId && ids.has(state.editingTextLayerId) ? state.editingTextLayerId : null,
+        editingFrameId: state.editingFrameId && ids.has(state.editingFrameId) ? state.editingFrameId : null,
+        contextMenu: null,
+        // Undoing past someone else's changes would fight the lock.
+        past: [],
+        future: [],
+        pendingSnapshot: null,
+      });
+      void ensureFontsLoaded(fresh.pages.flatMap((page) => page.layers).filter((layer): layer is TextLayer => layer.type === "text"));
+      if (message) {
+        get().showToast(message);
+      }
     },
 
     selectLayer: (id) => {
@@ -979,6 +1129,16 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       if (!design || get().saveStatus === "saved") {
         return;
       }
+      // Claude is editing: nothing of ours can be saved until Luis takes over.
+      if (get().lock?.holder === "agent") {
+        return;
+      }
+      if (saveInFlight) {
+        // One save at a time, so each starts from the revision the last one made.
+        saveAgain = true;
+        return;
+      }
+      saveInFlight = true;
       set({ saveStatus: "saving" });
       try {
         // The open page gets a fresh preview; the first page's preview also
@@ -996,16 +1156,20 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
           thumbnail: pages[0]?.thumbnail,
           // Explicit null so turning "format" off reaches the server.
           kind: design.kind ?? null,
+          baseRevision: design.revision ?? 0,
         };
         const saved = await api.updateDesign(design.id, payload);
         const current = get().design;
+        const savedAll = get().saveStatus === "saving";
         set({
-          saveStatus: get().saveStatus === "saving" ? "saved" : get().saveStatus,
+          saveStatus: savedAll ? "saved" : get().saveStatus,
+          unsavedEdits: savedAll ? false : get().unsavedEdits,
           ...(current
             ? {
                 design: {
                   ...current,
                   updatedAt: saved.updatedAt,
+                  revision: saved.revision,
                   thumbnail: payload.thumbnail ?? current.thumbnail,
                   // Keep the new preview without touching newer edits.
                   pages: current.pages.map((page) =>
@@ -1014,8 +1178,24 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
               }
             : {}),
         });
-      } catch {
+      } catch (error) {
         set({ saveStatus: "dirty" });
+        if (error instanceof ApiError && error.status === 423) {
+          set({ lock: (error.body as { lock?: DesignLock } | undefined)?.lock ?? null });
+        } else if (error instanceof ApiError && error.status === 409) {
+          saveInFlight = false;
+          saveAgain = false;
+          await get().syncFromServer("This design changed elsewhere, so your last change wasn't saved. It now shows the latest version.");
+          return;
+        }
+      } finally {
+        saveInFlight = false;
+      }
+      if (saveAgain) {
+        saveAgain = false;
+        if (get().saveStatus === "dirty") {
+          void get().saveNow();
+        }
       }
     },
 

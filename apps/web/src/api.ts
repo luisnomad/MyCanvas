@@ -10,6 +10,7 @@ import {
   type AssetInfo,
   type BlockDesign,
   type Design,
+  type DesignLock,
   type DesignPage,
   type DesignSummary,
   type DocumentSource,
@@ -29,8 +30,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * This tab's id, sent with every request so live updates can tell this
+ * tab's own changes from changes made elsewhere.
+ */
+export const CLIENT_ID = Math.random().toString(36).slice(2, 12);
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const headers = new Headers(init?.headers);
+  headers.set("X-MyCanvas-Client", CLIENT_ID);
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok) {
     let message = res.statusText;
     let body: unknown;
@@ -75,8 +84,14 @@ export interface CreateDesignInput {
   blocks?: BlockDesign;
 }
 
-/** An editor save; `kind: null` turns a format back into a plain design. */
-export type DesignUpdate = Omit<Design, "kind"> & { kind: "format" | null };
+/**
+ * An editor save; `kind: null` turns a format back into a plain design.
+ * `baseRevision` is the revision the edit started from: the server refuses
+ * the save (409) when the stored design is newer.
+ */
+export type DesignUpdate = Omit<Design, "kind"> & { kind: "format" | null; baseRevision?: number };
+
+export type { DesignLock };
 
 export interface Me {
   email: string;
@@ -108,6 +123,15 @@ export const api = {
   /** null unfiles the design. */
   moveDesign: (id: string, folderId: string | null) =>
     request<DesignSummary>(`/api/designs/${encodeURIComponent(id)}/move`, jsonInit("POST", { folderId })),
+  /** Every locked design (lock badges in the project list). */
+  listLocks: () => request<DesignLock[]>("/api/locks"),
+  getLock: (id: string) => request<DesignLock | null>(`/api/designs/${encodeURIComponent(id)}/lock`),
+  /** Locks the design to this person (first edit); ApiError 423 while Claude has it. */
+  lockDesign: (id: string) => request<DesignLock>(`/api/designs/${encodeURIComponent(id)}/lock`, { method: "POST" }),
+  /** Takes the design back from Claude at once. */
+  takeOverDesign: (id: string) => request<DesignLock>(`/api/designs/${encodeURIComponent(id)}/lock/takeover`, { method: "POST" }),
+  unlockDesign: (id: string) =>
+    request<{ ok: boolean; released: boolean }>(`/api/designs/${encodeURIComponent(id)}/lock`, { method: "DELETE" }),
   listFolders: () => request<Folder[]>("/api/folders"),
   createFolder: (name: string) => request<Folder>("/api/folders", jsonInit("POST", { name })),
   renameFolder: (id: string, name: string) =>

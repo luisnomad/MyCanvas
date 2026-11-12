@@ -565,6 +565,17 @@ input.color-hex:focus {
   font-size: 11px;
 }
 
+.card-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.card-lock .link-button {
+  font-size: 11px;
+}
+
 .design-actions {
   display: flex;
   gap: 6px;

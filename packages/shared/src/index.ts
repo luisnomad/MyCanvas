@@ -6,6 +6,7 @@ export type {
   BehindText,
   BlockKind,
   Design,
+  DesignLock,
   DesignPage,
   DesignSummary,
   DocumentSource,

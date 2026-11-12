@@ -1,7 +1,7 @@
 # MyCanvas agent API — v1 spec
 
-Status: **decisions settled (2026-11-12). Step 1 (core) built on branch
-`agent-api`; steps 2–7 to do.** See
+Status: **decisions settled (2026-11-12). Steps 1 (core) and 2 (editor live
+mode) built on branch `agent-api`; steps 3–7 to do.** See
 "Decisions" at the end.
 
 ## Goal

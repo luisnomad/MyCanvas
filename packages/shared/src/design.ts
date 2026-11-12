@@ -368,3 +368,14 @@ export function defaultShadow(): ShadowEffect {
 export function defaultStroke(): StrokeEffect {
   return { enabled: false, color: "#000000", width: 2 };
 }
+
+/** Who is editing a design (see docs/AGENT_API.md, "Lock model"). */
+export interface DesignLock {
+  designId: string;
+  holder: "agent" | "human";
+  /** "Claude" or the person's email. */
+  label: string;
+  /** Whose lock it is (for the agent: the workspace owner it works for). */
+  email: string;
+  since: string;
+}
