@@ -8,7 +8,10 @@ interface ExportDialogProps {
   onClose: () => void;
 }
 
+const PRINT_SCALE = "3.125";
 const SCALE_OPTIONS = ["0.25", "0.5", "0.75", "1", "2", "3"];
+/** PDF image resolution: designs are 96 px per inch, so 3.125x is 300 dpi. */
+const PDF_SCALE_OPTIONS = ["1", "2", "3", PRINT_SCALE];
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) {
@@ -136,9 +139,11 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
             onChange={(e) => {
               const next = e.target.value === "jpeg" ? "jpeg" : e.target.value === "pdf" ? "pdf" : "png";
               setFormat(next);
-              if (next === "pdf" && ratio === "1") {
+              if (next === "pdf" && (ratio === "1" || !PDF_SCALE_OPTIONS.includes(ratio))) {
                 // Image slices look soft at 1x in a PDF zoomed on screen.
                 setRatio("2");
+              } else if (next !== "pdf" && !SCALE_OPTIONS.includes(ratio)) {
+                setRatio("3");
               }
             }}
           >
@@ -155,9 +160,11 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
               setRatio(e.target.value);
             }}
           >
-            {SCALE_OPTIONS.map((option) => (
+            {(format === "pdf" ? PDF_SCALE_OPTIONS : SCALE_OPTIONS).map((option) => (
               <option key={option} value={option}>
-                {option === "1" ? "1x (original)" : `${option}x`}
+                {format === "pdf"
+                  ? (option === PRINT_SCALE ? "Print · 300 dpi" : `${option}x · ${String(Math.round(Number(option) * 96))} dpi`)
+                  : option === "1" ? "1x (original)" : `${option}x`}
               </option>
             ))}
           </select>

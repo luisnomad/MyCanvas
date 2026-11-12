@@ -299,10 +299,10 @@ type Position = "top" | "bottom" | number | { above: string } | { below: string 
 |---|---|---|
 | GET | `/designs/:id/render?page=0&format=png\|jpg&scale=1&quality=0.9` | page image bytes |
 | GET | `/designs/:id/layout?page=0` | each layer's rendered box (text bounds, overflow checks) |
-| GET | `/designs/:id/export.pdf` | every page, same PDF export as the editor |
+| GET | `/designs/:id/export.pdf?scale=2` | every page, same PDF export as the editor. Plain text stays real text; text with effects, curves, images and shapes are images at `scale` (0.1–4; 2 ≈ 192 dpi, **3.125 = 300 dpi for print**) |
 | GET | `/designs/:id/export.zip?format=png&scale=2` | every page as images |
 
-`scale` is 0.1–3. Measured on the Mac (1200×628 design): first render
+`scale` is 0.1–3 (PDF: up to 4). Measured on the Mac (1200×628 design): first render
 after a quiet spell about 2 s, then about 0.1 s; a 2-page PDF about 0.6 s.
 `render` lists fonts the renderer lacks in `X-MyCanvas-Missing-Fonts`;
 `layout` returns `{ width, height, layers: [{ id, name, type, x, y, width,

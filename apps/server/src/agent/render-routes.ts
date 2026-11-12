@@ -46,11 +46,14 @@ function pageParam(c: Context): number | null {
   return Number.isInteger(page) && page >= 0 ? page : null;
 }
 
-function scaleParam(c: Context, fallback: number): number | null {
+function scaleParam(c: Context, fallback: number, max = 3): number | null {
   const raw = c.req.query("scale");
   const scale = raw === undefined ? fallback : Number(raw);
-  return Number.isFinite(scale) && scale >= 0.1 && scale <= 3 ? scale : null;
+  return Number.isFinite(scale) && scale >= 0.1 && scale <= max ? scale : null;
 }
+
+/** PDFs go up to 4x: 3.125x is 300 dpi for print (designs are 96 px per inch). */
+const PDF_MAX_SCALE = 4;
 
 function safeFileName(name: string): string {
   return name.replace(/[^\p{L}\p{N} ._-]+/gu, "").trim().slice(0, 80) || "design";
@@ -167,13 +170,13 @@ export function registerRenderRoutes(app: Hono<AppEnv>): void {
 
   app.get(`${BASE}/designs/:id/export.pdf`, async (c) => {
     const id = c.req.param("id");
-    const scale = scaleParam(c, 2);
+    const scale = scaleParam(c, 2, PDF_MAX_SCALE);
     const design = await readDesign(c.get("ws"), id);
     if (!design) {
       return c.json({ error: "Not found" }, 404);
     }
     if (scale === null) {
-      return c.json({ error: "scale must be 0.1–3" }, 400);
+      return c.json({ error: "scale must be 0.1–4 (3.125 = 300 dpi for print)" }, 400);
     }
     try {
       const pdf = Buffer.from(await runHeadless("exportPdf", id, scale), "base64");
