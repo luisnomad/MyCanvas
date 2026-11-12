@@ -1,6 +1,7 @@
-# MyCanvas agent API — v1 spec (draft for approval)
+# MyCanvas agent API — v1 spec
 
-Status: **draft, nothing built yet.** Decisions marked **[decide]** need Luis's OK.
+Status: **decisions settled (2026-11-12), nothing built yet.** See
+"Decisions" at the end.
 
 ## Goal
 
@@ -35,11 +36,16 @@ time, agents in other people's workspaces, real-time co-editing (CRDT/OT).
   without a route header act as the owner. Public requests
   (`mycanvas.luisserrano.es`) need a Cloudflare Access JWT.
 
-## Transport — recommendation
+## Transport
 
 **A plain HTTP API inside the existing server, under `/api/agent/v1/`, reached
 from the Mac at `https://canva.local` (the existing LAN-only route). No new
 tunnel.** A thin MCP wrapper comes second, as an optional convenience.
+
+`canva.local` is **Claude's bridge only**. Luis keeps using MyCanvas from
+either address (`canva.local` at home, `mycanvas.luisserrano.es` anywhere);
+both open the same owner workspace, get the same live updates and see the
+same locks. Agent calls are accepted only on the LAN route.
 
 Why:
 
@@ -177,23 +183,32 @@ window.mycanvasHeadless = {
   renderPage(designId, pageIndex, { format, scale, quality }) → dataURL,
   exportPdf(designId) → base64 PDF,
   layoutDocument(formatId, markdown) → DesignPage[],
+  importContent(asset, { pagePerPage }) → { markdown, warnings },   // PDF/DOCX/PPTX/MD
+  formatFromExample(asset, { name, describe }) → Design,            // PDF
   layerBoxes(designId, pageIndex) → { id, x, y, width, height }[],
   missingFonts(designId) → string[],
 };
 ```
 
 - It waits for fonts and images before drawing, never autosaves, and runs one
-  job at a time (queue). Chromium starts on first use and closes after 5 min
-  idle, so it costs nothing when unused.
+  job at a time (queue).
+- **Kept warm for speed.** Chromium and the `#/headless` page stay loaded
+  while Claude holds any lock and for 10 min after the last job, and each
+  job reuses that page (it loads the design through an in-page call; no new
+  page and no app reload per render). Only the first render after a quiet
+  spell pays the start-up (about 1–2 s, estimate); later renders only
+  wait for drawing, fonts and images. Images and fonts it has loaded once
+  stay in the page's cache.
 - After agent writes, the server also re-renders the page-1 thumbnail
   (debounced 3 s) so the project list shows Claude's work.
 - Docker: the runtime image gains Chromium (`npx playwright install --with-deps
   chromium`, about +400 MB). nmd-srvr has room (371 GB disk free, 15 GiB RAM
   available). In local dev the server uses the Chromium Playwright already
   installed on the Mac.
-- **[decide]** In the app container (simplest, recommended) or a separate
-  renderer container in the compose file (keeps the app image slim, one more
-  service to run).
+- **Runs inside the app container** (decided: the faster option). The
+  renderer and the server share one container and talk over 127.0.0.1, so
+  no extra network hop and no second service to start or keep in sync.
+  Chromium's memory is capped by its own flags and the 10 min idle close.
 
 Font caveat: server-side Chromium has no Mac system fonts. A design using e.g.
 Avenir renders with a fallback font there. `render` reports such fonts in an
@@ -219,7 +234,6 @@ Base: `/api/agent/v1`. JSON in and out unless noted. Errors are
 | GET | `/folders`, POST `/folders` | design folders (same as editor) |
 
 Deleting designs is **not** in the agent API in v1 (Luis deletes by hand).
-**[decide]**
 
 ### Layer and page operations (batched)
 
@@ -284,6 +298,29 @@ Markdown is the same dialect as the editor (`#`, `**lead**`, `##`, `>`,
 `![name](upload)`, `---`). The AI tidy and illustration steps are not part of
 this endpoint (Claude writes the content itself).
 
+### Pages from PDFs (content and style)
+
+PDFs are sources, not pictures to place: their **style** becomes a format and
+their **content** becomes pages. Both reuse the editor's existing code
+(`format-from-example/` and `import/`) in the headless renderer, so results
+match "Format from example…" and "Import a file" in the editor.
+
+| method | path | what |
+|---|---|---|
+| POST | `/formats/from-example` | `{ asset, name?, folderId?, describe? }` → new format from the PDF's first pages: page size, background art, fonts and weights, text colours, spacing, callout boxes, image sample. `describe: true` also writes the format's AI instructions (needs the text model, which may be offline; then it's skipped and said so). Returns the format and its warnings (e.g. fonts with stand-ins) |
+| POST | `/content/import` | `{ asset, pagePerPage? }` → `{ markdown, warnings, stats }` from a PDF, DOCX, PPTX or Markdown upload: headings, leads, lists, quotes, tables; embedded images go to Uploads. Claude reviews or edits the Markdown before laying it out |
+| POST | `/documents` | as above, with that Markdown and any format |
+
+So a full flow is: upload the client's PDF → `formats/from-example` (style) →
+`content/import` (content) → Claude edits the Markdown → `documents` → render
+and check → Luis finishes by hand. Content and style may come from different
+PDFs.
+
+Fonts named by the example that MyCanvas doesn't have are flagged as
+stand-ins, as in the editor. Uploading the real font (below) and re-running
+fixes them. Fonts embedded in the PDF are not extracted: they are usually
+subsets missing most characters.
+
 ### Uploads (files and attachments)
 
 | method | path | what |
@@ -294,11 +331,11 @@ this endpoint (Claude writes the content itself).
 | POST | `/assets/move` | `{ assets, folderId }` |
 
 - Images: png, jpg, webp, gif, svg, up to 25 MB, as today.
-- **PDF**: kept as an attachment in Uploads **and** split into one PNG per page
-  (via the headless renderer and the pdf.js code already in the web app), in
-  the same folder, so pages can be placed like images. The Uploads drawer shows
-  the PDF as a file card. **[decide]** Is "PDF → page images" what you want
-  from PDF uploads, or just store them for "Format from example" / import?
+- **Source files: PDF, DOCX, PPTX, Markdown** (up to 50 MB). Stored in
+  Uploads as attachments (a file card in the drawer, not placeable on the
+  canvas) for the "Pages from PDFs" endpoints above. They are not split into
+  page images. In the editor, "Format from example…" and "Import a file" can
+  pick them from Uploads as well as from disk.
 - Uploads from the agent appear in Luis's Uploads drawer at once
   (`assets.changed`).
 
@@ -404,7 +441,8 @@ dev server before the next.
    `baseRevision` on save, lock badges in the project list. Verified in the
    browser preview.
 3. **Headless renderer:** `#/headless` page, Playwright runner, render /
-   layout / PDF / zip, thumbnails, documents from Markdown, PDF uploads.
+   layout / PDF / zip, thumbnails, documents from Markdown, source-file
+   uploads, format from example, content import.
 4. **Fonts:** upload, parsing, CSS, picker section, PDF embedding, headless.
 5. **MCP wrapper** (optional) in `tools/mcp/`.
 6. **Demo locally:** Claude builds a small design through the API while the
@@ -416,13 +454,14 @@ Steps 1–2 alone already give "Claude edits, Luis watches live and takes over";
 3 adds Claude seeing its work. The CEEI Bonilista deadline does not depend on
 any of this.
 
-## Decisions for Luis
+## Decisions (Luis, 2026-11-12)
 
-1. HTTP API over `canva.local` + token, MCP wrapper later: OK?
-2. ~~Lock timeouts~~ Settled: no timeouts; locks are released on purpose
-   (rules above). Claude's lock is intentional too: it releases at the end
-   of each task, and Take over covers a forgotten one.
-3. Headless Chromium inside the app container (+~400 MB) vs a separate
-   renderer container.
-4. PDF uploads: also split into page images, or store only?
-5. No design deletion through the agent API in v1: OK?
+1. **Transport:** HTTP API over `canva.local` with a token is Claude's bridge;
+   Luis uses either address. MCP wrapper later, optional.
+2. **Locks:** no timeouts; locks are released on purpose (rules above).
+   Claude releases at the end of each task; Take over covers a forgotten one.
+3. **Renderer:** headless Chromium inside the app container, kept warm (the
+   faster option).
+4. **PDF uploads** are sources for content and style (format from example,
+   content import), not page images.
+5. **No design deletion** through the agent API in v1.
