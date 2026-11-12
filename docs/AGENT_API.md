@@ -1,6 +1,7 @@
 # MyCanvas agent API — v1 spec
 
-Status: **decisions settled (2026-11-12), nothing built yet.** See
+Status: **decisions settled (2026-11-12). Step 1 (core) built on branch
+`agent-api`; steps 2–7 to do.** See
 "Decisions" at the end.
 
 ## Goal
@@ -240,7 +241,8 @@ Deleting designs is **not** in the agent API in v1 (Luis deletes by hand).
 `POST /designs/:id/ops` with `{ baseRevision?, ops: Op[] }`. The batch is
 applied **atomically**: all ops or none, one revision, one `design.updated`
 event (so Luis sees one clean change, not twenty flickers). Returns
-`{ revision, created: { [tempId]: layerId } }`.
+`{ revision, created: string[] }`: the ids of the layers and pages added, in
+op order.
 
 ```ts
 type PageRef = number | string;          // 0-based index or page id; default 0

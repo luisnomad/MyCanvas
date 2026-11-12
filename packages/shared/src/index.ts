@@ -34,6 +34,7 @@ export type {
   TextLayer,
 } from "./design";
 export { BLOCK_KINDS, allLayers, defaultShadow, defaultStroke, defaultTextEffect, normalizeDesign } from "./design";
+export { SHAPE_NAMES, newFrameLayer, newLayer, newLineLayer, newRectLayer, newShapeLayer, newTextLayer } from "./layers";
 export type { GoogleFont } from "./google-fonts";
 export { GOOGLE_FONTS } from "./google-fonts";
 export type { SizePreset, TemplateSummary } from "./templates";

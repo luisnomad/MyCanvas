@@ -281,6 +281,8 @@ export interface Design {
   formatAi?: FormatAiInstructions;
   /** Designs made of visual blocks: the theme and each page's block. */
   blocks?: BlockDesign;
+  /** Incremented by the server on every write; absent on older files (= 0). */
+  revision?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -355,6 +357,8 @@ export interface DesignSummary {
   thumbnail?: string;
   createdAt: string;
   updatedAt: string;
+  /** The design's current revision (0 for files from before revisions). */
+  revision?: number;
 }
 
 export function defaultShadow(): ShadowEffect {
