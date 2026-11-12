@@ -264,7 +264,8 @@ export function primarySelectedId(state: { selectedLayerIds: string[] }): string
  * UI path can bypass the freeze.
  */
 function patchAllowedOnLocked(patch: LayerPatch): boolean {
-  return Object.keys(patch).every((key) => key === "locked");
+  // Locking and naming the layer's group don't change what it looks like.
+  return Object.keys(patch).every((key) => key === "locked" || key === "groupName");
 }
 
 /** Sequential names: next free image_N across the design, case-insensitive. */
@@ -1091,7 +1092,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         const members = memberIndices
           .map((index) => current.layers[index])
           .filter((layer): layer is Layer => Boolean(layer))
-          .map((layer) => ({ ...layer, groupId }));
+          .map((layer) => ({ ...layer, groupId, groupName: undefined }));
         const nonMembers = current.layers.filter((layer) => !ids.includes(layer.id));
         const topIndex = memberIndices[memberIndices.length - 1] ?? 0;
         const insertAt = Math.max(0, topIndex - (memberIndices.length - 1));
@@ -1116,7 +1117,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       mutate(
         (current) => ({
           layers: current.layers.map((layer) =>
-            layer.groupId && groupIds.has(layer.groupId) ? { ...layer, groupId: undefined } : layer),
+            layer.groupId && groupIds.has(layer.groupId) ? { ...layer, groupId: undefined, groupName: undefined } : layer),
         }),
         false,
       );

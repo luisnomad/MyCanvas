@@ -28,6 +28,8 @@ interface LayerBase {
   visible: boolean;
   /** Group membership; layers sharing a groupId form a contiguous run. */
   groupId?: string;
+  /** The group's name, kept on each member (absent = "Group N"). */
+  groupName?: string;
   /** Locked layers: selectable but frozen — no transform/drag/nudge/delete/
    *  z-order/property edits, and marquee selection skips them. */
   locked?: boolean;
@@ -195,6 +197,9 @@ export interface RectLayer extends LayerBase {
 export interface LineLayer extends LayerBase {
   type: "line";
   points: [number, number, number, number];
+  /** Bend point: present = a smooth curve (quadratic Bézier) from the first
+   *  point to the second, pulled towards this point (same units as points). */
+  control?: [number, number];
   strokeColor: string;
   strokeWidth: number;
   lineCap: "butt" | "round" | "square";

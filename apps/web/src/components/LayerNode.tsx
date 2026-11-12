@@ -11,6 +11,8 @@ import {
   type ShapeLayer,
   type StrokeEffect,
   type TextLayer,
+  cubicPoints,
+  curveBounds,
   frameContentBox,
 } from "@mycanvas/shared";
 import { useImage } from "../hooks/useImage";
@@ -448,21 +450,20 @@ function RectNode({ layer, registerRef }: { layer: RectLayer } & LayerNodeProps)
 
 function LineNode({ layer, registerRef }: { layer: LineLayer } & LayerNodeProps) {
   const { common, setRefs } = useCommonNodeProps(layer, registerRef);
-  const [x1, y1, x2, y2] = layer.points;
-  const left = Math.min(x1, x2);
-  const top = Math.min(y1, y2);
+  const { left, top, right, bottom } = curveBounds(layer.points, layer.control);
   return (
     <Group ref={setRefs} {...common}>
       <Rect
         x={left}
         y={top - 6}
-        width={Math.max(1, Math.abs(x2 - x1))}
-        height={Math.max(12, Math.abs(y2 - y1) + 12)}
+        width={Math.max(1, right - left)}
+        height={Math.max(12, bottom - top + 12)}
         fill="transparent"
         listening={false}
       />
       <Line
-        points={layer.points}
+        points={layer.control ? cubicPoints(layer.points, layer.control) : layer.points}
+        bezier={Boolean(layer.control)}
         stroke={layer.strokeColor}
         strokeWidth={layer.strokeWidth}
         lineCap={layer.lineCap}

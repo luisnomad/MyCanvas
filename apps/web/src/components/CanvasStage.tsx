@@ -23,6 +23,7 @@ import {
   traceFramePath,
 } from "../utils/frames";
 import { LayerNode } from "./LayerNode";
+import { LineBendHandle } from "./LineBendHandle";
 import { Rulers } from "./Rulers";
 import { TextEditorOverlay } from "./TextEditorOverlay";
 
@@ -594,7 +595,12 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
       const points: [number, number, number, number] = anchor === "middle-left"
         ? [x2 - width * delta, y1, x2, y2]
         : [x1, y1, x1 + width * delta, y2];
-      updateLayer(layer.id, { ...pos, x: layer.x, points, scaleX: base, scaleY: sy });
+      // A bend stretches with the line, away from the end that stays put.
+      const fixedX = anchor === "middle-left" ? x2 : x1;
+      const control: [number, number] | undefined = layer.control
+        ? [fixedX + (layer.control[0] - fixedX) * delta, layer.control[1]]
+        : undefined;
+      updateLayer(layer.id, { ...pos, x: layer.x, points, ...(control ? { control } : {}), scaleX: base, scaleY: sy });
       return;
     }
 
@@ -1726,6 +1732,14 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
                   borderStroke={accentColor}
                   borderEnabled={selectedLayerIds.length <= 1}
                 />
+                {selectedLayer?.type === "line" && !selectedLayer.locked && !editingLayer && nodesRef.current.get(selectedLayer.id) && (
+                  <LineBendHandle
+                    layer={selectedLayer}
+                    node={nodesRef.current.get(selectedLayer.id)!}
+                    scale={scale}
+                    color={accentColor}
+                  />
+                )}
               </Layer>
             </Stage>
             {editingLayer?.type === "text" && (

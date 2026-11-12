@@ -258,6 +258,34 @@ describe("designs and ops", () => {
     expect(bad.status).toBe(400);
   });
 
+  it("bends lines with a control point and straightens them with null", async () => {
+    const design = await newDesign();
+    expect((await ops(design.id, [
+      { op: "addLayer", layer: { type: "line", id: "arc", x: 0, y: 0, points: [0, 100, 200, 100], control: [100, 0] } },
+    ])).status).toBe(200);
+    expect((await getDesign(design.id)).pages[0]?.layers[0]).toMatchObject({ points: [0, 100, 200, 100], control: [100, 0] });
+    expect((await ops(design.id, [{ op: "updateLayer", id: "arc", set: { control: null } }])).status).toBe(200);
+    expect((await getDesign(design.id)).pages[0]?.layers[0]).not.toHaveProperty("control");
+    const bad = await ops(design.id, [{ op: "updateLayer", id: "arc", set: { control: [1, 2, 3] } }]);
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toContain("control");
+  });
+
+  it("names groups through a layer field or the nameGroup op", async () => {
+    const design = await newDesign();
+    expect((await ops(design.id, [
+      { op: "addLayer", layer: { type: "rect", id: "a", groupId: "g1", groupName: "Light line 1" } },
+      { op: "addLayer", layer: { type: "rect", id: "b", groupId: "g1", groupName: "Light line 1" } },
+    ])).status).toBe(200);
+    expect((await getDesign(design.id)).pages[0]?.layers.map((layer) => layer.groupName)).toEqual(["Light line 1", "Light line 1"]);
+    expect((await ops(design.id, [{ op: "nameGroup", groupId: "g1", name: "Venue arc" }])).status).toBe(200);
+    expect((await getDesign(design.id)).pages[0]?.layers.map((layer) => layer.groupName)).toEqual(["Venue arc", "Venue arc"]);
+    expect((await ops(design.id, [{ op: "nameGroup", groupId: "g1", name: null }])).status).toBe(200);
+    expect((await getDesign(design.id)).pages[0]?.layers.every((layer) => layer.groupName === undefined)).toBe(true);
+    const missing = await ops(design.id, [{ op: "nameGroup", groupId: "nope", name: "X" }]);
+    expect(((await missing.json()) as { error: string }).error).toContain("no layers in group");
+  });
+
   it("adds, copies, moves and deletes pages", async () => {
     const design = await newDesign();
     await ops(design.id, [{ op: "addLayer", layer: { type: "rect", id: "r1" } }]);

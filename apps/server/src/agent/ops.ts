@@ -191,6 +191,7 @@ const COMMON: Record<string, Check> = {
   opacity: unit,
   visible: bool,
   groupId: optional(str),
+  groupName: (v, f) => (typeof v === "string" && v.trim() !== "" && v.length <= 80 ? v.trim() : fail(f, "must be a name of 1–80 characters")),
   locked: bool,
   formatRole: passthroughObject,
   blockSlot: str,
@@ -230,6 +231,10 @@ const TYPE_FIELDS: Record<Layer["type"], Record<string, Check>> = {
       Array.isArray(v) && v.length === 4 && (v as unknown[]).every((n) => typeof n === "number" && Number.isFinite(n))
         ? (v as number[])
         : fail(f, "must be [x1, y1, x2, y2]"),
+    control: (v, f) =>
+      Array.isArray(v) && v.length === 2 && (v as unknown[]).every((n) => typeof n === "number" && Number.isFinite(n))
+        ? (v as number[])
+        : fail(f, "must be [x, y], the point the curve bends towards"),
     strokeColor: color,
     strokeWidth: pos,
     lineCap: oneOf("butt", "round", "square"),
@@ -250,7 +255,7 @@ const TYPE_FIELDS: Record<Layer["type"], Record<string, Check>> = {
 };
 
 /** Fields that may be set to null to remove them. */
-const CLEARABLE = new Set(["groupId", "gradient", "crop", "adjust", "content", "behindText", "formatRole", "blockSlot", "curve", "cornerRadius", "contentRotation"]);
+const CLEARABLE = new Set(["groupId", "gradient", "crop", "adjust", "content", "behindText", "formatRole", "blockSlot", "curve", "cornerRadius", "contentRotation", "control", "groupName"]);
 
 function checkFields(type: Layer["type"], input: Record<string, unknown>, where: string, extras: string[] = []): Record<string, unknown> {
   const fields = { ...COMMON, ...TYPE_FIELDS[type] };
@@ -635,8 +640,36 @@ export function applyOps(source: Design, ops: unknown, ctx: OpsContext): OpsResu
         design.pages.splice(Math.max(0, Math.min(design.pages.length, op.to)), 0, page!);
         return;
       }
+      case "nameGroup": {
+        // Names every member of a group at once (null goes back to "Group N").
+        if (typeof op.groupId !== "string" || op.groupId === "") {
+          fail(`${where}.groupId`, "must be a group id (a layer's groupId)");
+        }
+        const name = op.name === null ? null : COMMON.groupName!(op.name, `${where}.name`) as string;
+        const pages = op.page === undefined ? design.pages : [design.pages[pageIndex(design, op.page, `${where}.page`)]!];
+        let found = 0;
+        for (const page of pages) {
+          page.layers = page.layers.map((layer) => {
+            if (layer.groupId !== op.groupId) {
+              return layer;
+            }
+            found += 1;
+            const next = { ...layer };
+            if (name === null) {
+              delete next.groupName;
+            } else {
+              next.groupName = name;
+            }
+            return next;
+          });
+        }
+        if (found === 0) {
+          fail(`${where}.groupId`, `no layers in group "${op.groupId}"`);
+        }
+        return;
+      }
       default:
-        fail(`${where}.op`, "must be addLayer, updateLayer, deleteLayer, moveLayer, addPage, updatePage, deletePage or movePage");
+        fail(`${where}.op`, "must be addLayer, updateLayer, deleteLayer, moveLayer, nameGroup, addPage, updatePage, deletePage or movePage");
     }
   });
 

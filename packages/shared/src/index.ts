@@ -37,6 +37,7 @@ export type {
 } from "./design";
 export { BLOCK_KINDS, allLayers, defaultShadow, defaultStroke, defaultTextEffect, normalizeDesign } from "./design";
 export type { ContentBox } from "./frame-content";
+export { controlForMidpoint, cubicPoints, curveBounds, curveMidpoint } from "./line-curve";
 export { clampContent, coverContent, coverScale, frameContentBox, recoverContent } from "./frame-content";
 export { SHAPE_NAMES, newFrameLayer, newLayer, newLineLayer, newRectLayer, newShapeLayer, newTextLayer } from "./layers";
 export type { GoogleFont } from "./google-fonts";

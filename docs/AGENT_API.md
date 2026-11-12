@@ -261,6 +261,7 @@ type Op =
   | { op: "updateLayer"; page?: PageRef; id: string; set: Partial<Layer> }
   | { op: "deleteLayer"; page?: PageRef; id: string }
   | { op: "moveLayer"; page?: PageRef; id: string; to: Position }
+  | { op: "nameGroup"; page?: PageRef; groupId: string; name: string | null }
   | { op: "addPage"; after?: PageRef; background?: string; copyOf?: PageRef }
   | { op: "updatePage"; page: PageRef; background?: string; backgroundGradient?: GradientFill | null }
   | { op: "deletePage"; page: PageRef }
@@ -289,7 +290,13 @@ type Position = "top" | "bottom" | number | { above: string } | { below: string 
 - `updateLayer.set` merges shallowly; nested objects (`effect`, `crop`,
   `gradient`) are replaced whole. The server validates against the layer
   types and rejects unknown fields, wrong types or `type` changes.
-- Groups: `groupId` can be set like any field; a helper op is not in v1.
+- Groups: layers that share a `groupId` (and sit next to each other) form a
+  group. Give it a name with `groupName` on each member, or rename it later
+  with `nameGroup` (`null` goes back to "Group N").
+- Lines: `points: [x1, y1, x2, y2]`, plus optional `control: [x, y]` to bend
+  the line into a smooth curve (quadratic Bézier) pulled towards that point.
+  `null` straightens it. In the editor, a round handle on the line's middle
+  bends it.
 - For bulk work, `PUT /designs/:id` (whole design, `baseRevision` required)
   is also available, with the same locks.
 
