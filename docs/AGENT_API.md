@@ -89,46 +89,58 @@ cleaner long-term option, but it isn't set up on nmd-srvr.
 
 ## Lock model
 
-One lock per design, held in server memory (a restart clears all locks, which
-is safe: writes simply re-acquire).
+**Locking is automatic; unlocking is intentional.** The first edit locks a
+design, and the lock stays until someone releases it on purpose. There are no
+timeouts. Because locks can last for days, they are stored on disk
+(`locks.json` in the workspace) and survive restarts and deploys.
 
 ```ts
 interface DesignLock {
   designId: string;
   holder: "agent" | "human";
   label: string;        // "Claude" or the person's email
-  clientId: string;     // editor tab id, or "agent"
+  email: string;        // the person the lock belongs to (the owner, for Claude)
   since: string;        // ISO time
-  expiresAt: string;    // ISO time; renewed by activity
 }
 ```
 
 Rules:
 
 1. **Viewing never locks.** Luis can keep a design open and watch Claude work.
-2. **Agent lock.** Any agent write takes the lock automatically if the design
-   is free (or already Claude's) and renews it. `POST …/lock` takes it
-   explicitly (e.g. to hold the design while Claude thinks). Expires **2 min
-   after the last agent activity**; `DELETE …/lock` releases it at once.
-3. **Human lock.** The editor takes the lock on Luis's **first edit** (not on
-   open) and renews it with each save. It is released after **60 s with no
-   edits once everything is saved**, when the tab closes (`sendBeacon`), or
-   with a "Hand back to Claude" button.
-4. **While Claude holds the lock**, the editor is view-only: a banner says
-   "Claude is editing — changes appear live", tools are disabled, and a
-   **"Take over"** button takes the lock back at once (`POST …/lock/takeover`).
-   Claude's next write then gets `423 { error: "lock_lost" }`; Claude stops and
-   reports, and does not retry until the lock is free again.
-5. **While Luis holds the lock**, agent writes get
-   `423 { error: "locked", holder, expiresAt }`. Claude cannot take a human
-   lock. It waits (watching the event stream for `lock.changed`) or asks Luis.
-6. Server-side checks are the source of truth; the editor's view-only state is
+2. **Claude's lock.** Claude's first write to a free design locks it to Claude
+   (so do creating and duplicating). The lock stays until Claude releases it
+   with `DELETE …/lock` when it's done, or Luis takes it over. Claude releases
+   at the end of each task and says so in its report.
+3. **Luis's lock.** Luis's first edit locks the design to him (opening it does
+   not). It belongs to him as a person, not to one tab: reopening the design
+   later, in any tab or browser, he simply keeps editing. It stays until he
+   unlocks it with the **Unlock** button in the editor's top bar (or on the
+   design's card in the project list).
+4. **Leaving with the design still locked is allowed, but never silent.**
+   Going back to the project list or opening another design shows a dialog:
+   "This design is still locked to you. Claude can't edit it until you unlock
+   it." with **Unlock and leave** / **Keep locked and leave** / **Stay**.
+   Closing or reloading the tab triggers the browser's own "Leave site?"
+   prompt (browsers don't allow custom text there); the design stays locked.
+5. **While Claude holds the lock**, the editor is view-only: a banner says
+   "Claude is editing — changes appear live", tools are disabled, and
+   **"Take over"** moves the lock to Luis at once (`POST …/lock/takeover`).
+   Claude's next write then gets `423 { error: "lock_lost" }`; Claude stops,
+   reports, and does not write again until the lock is free. Take over is
+   also Luis's way out if Claude ever leaves a design locked.
+6. **While Luis holds the lock**, agent writes get
+   `423 { error: "locked", holder, since }`. Claude never takes or releases
+   Luis's lock on its own. **When Luis asks it to** ("unlock the Bonilista
+   design"), Claude releases it with `POST …/lock/release-human`; the editor
+   then shows "Unlocked at your request" and switches to view-only if it's
+   open. If an open tab still had unsaved edits, they are saved first if the
+   design hasn't changed since; otherwise the 409 path below shows them as
+   not saved.
+7. Server-side checks are the source of truth; the editor's view-only state is
    just UX. An editor `PUT` while Claude holds the lock gets 423 and is not
    saved.
-7. The project list shows a small "Claude editing" badge on locked designs.
-
-Timeouts are constants (`AGENT_LOCK_TTL_MS = 120_000`,
-`HUMAN_LOCK_IDLE_MS = 60_000`). **[decide]** whether 2 min / 60 s feel right.
+8. The project list shows the lock on each card ("Claude editing" or "Locked
+   by you", with Unlock), so forgotten locks are easy to spot.
 
 ## Live updates (event stream)
 
@@ -344,13 +356,15 @@ Licensing: only upload fonts whose licence allows web and PDF embedding.
 | method | path | what |
 |---|---|---|
 | GET | `/designs/:id/lock` | current lock or `null` |
-| POST | `/designs/:id/lock` | take or renew the agent lock (423 if Luis holds it) |
-| DELETE | `/designs/:id/lock` | release |
+| POST | `/designs/:id/lock` | take the lock for Claude before a write (423 if Luis holds it) |
+| DELETE | `/designs/:id/lock` | release Claude's lock (end of task) |
+| POST | `/designs/:id/lock/release-human` | release Luis's lock, **only when Luis asks** |
 | GET | `/events` | SSE, same events as the editor gets |
 
-Editor-side (normal auth): `POST /api/designs/:id/lock` (human, with
-`clientId`), `POST /api/designs/:id/lock/takeover`,
-`DELETE /api/designs/:id/lock`, `GET /api/events`.
+Editor-side (normal auth): `POST /api/designs/:id/lock` (Luis's first
+edit), `POST /api/designs/:id/lock/takeover`, `DELETE /api/designs/:id/lock`
+(Unlock), `GET /api/locks` (all locks, for the project list),
+`GET /api/events`.
 
 ## A typical Claude session
 
@@ -372,7 +386,8 @@ curl -sXDELETE -H "$H" "$MYCANVAS_URL/api/agent/v1/designs/$ID/lock"
 ```
 
 Luis has the design open at `https://canva.local/#/edit/$ID` and sees each
-batch land; when he starts editing, the lock is his.
+batch land. The last call releases Claude's lock; when Luis starts editing,
+the lock is his until he unlocks it.
 
 ## Build order
 
@@ -381,11 +396,13 @@ dev server before the next.
 
 1. **Core:** token auth, revisions, locks, `ops`, layer factories in shared,
    uploads (images), SSE event bus. Tests: auth (token, public route refused),
-   lock rules (auto-acquire, 423, takeover → lock_lost, expiry with fake
-   timers), op validation and atomicity, revision 409.
+   lock rules (auto-acquire, 423, takeover → lock_lost, release-human,
+   locks survive a restart), op validation and atomicity, revision 409.
 2. **Editor live mode:** `/api/events` subscription, apply remote updates,
-   view-only banner with Take over, human lock on first edit, `baseRevision`
-   on save, badge in the project list. Verified in the browser preview.
+   view-only banner with Take over, Luis's lock on first edit, Unlock
+   button, leave dialog and browser leave prompt while locked,
+   `baseRevision` on save, lock badges in the project list. Verified in the
+   browser preview.
 3. **Headless renderer:** `#/headless` page, Playwright runner, render /
    layout / PDF / zip, thumbnails, documents from Markdown, PDF uploads.
 4. **Fonts:** upload, parsing, CSS, picker section, PDF embedding, headless.
@@ -402,7 +419,9 @@ any of this.
 ## Decisions for Luis
 
 1. HTTP API over `canva.local` + token, MCP wrapper later: OK?
-2. Lock timeouts: Claude 2 min after last activity, Luis 60 s idle after save.
+2. ~~Lock timeouts~~ Settled: no timeouts; locks are released on purpose
+   (rules above). Claude's lock is intentional too: it releases at the end
+   of each task, and Take over covers a forgotten one.
 3. Headless Chromium inside the app container (+~400 MB) vs a separate
    renderer container.
 4. PDF uploads: also split into page images, or store only?
