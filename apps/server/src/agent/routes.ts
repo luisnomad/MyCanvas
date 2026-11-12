@@ -21,6 +21,7 @@ import {
   writeDesign,
 } from "../designs";
 import { eventStream, publish } from "../events";
+import { registerFontRoutes } from "../font-routes";
 import { imageSize } from "../image-size";
 import { type DesignLock, acquireLock, getLock, releaseLock, serialized, wasTakenFromAgent } from "../locks";
 import { isSafeId, newId, workspaceFor } from "../storage";
@@ -331,4 +332,5 @@ export function registerAgentRoutes(app: Hono<AppEnv>, helpers: AgentHelpers): v
 
   registerAssetFolderRoutes(app, helpers.isSafeAssetFile, AGENT_BASE);
   registerRenderRoutes(app);
+  registerFontRoutes(app, `${AGENT_BASE}/fonts`);
 }

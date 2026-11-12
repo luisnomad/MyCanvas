@@ -3,7 +3,9 @@ import { Editor } from "./screens/Editor";
 import { Headless } from "./screens/Headless";
 import { ProjectList } from "./screens/ProjectList";
 import { ALL_DESIGNS, folderViewFromHash } from "./utils/folders";
+import { loadCustomFonts } from "./utils/custom-fonts";
 import { shouldHoldNavigation } from "./utils/leave-guard";
+import { onLive } from "./utils/live";
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(() => window.location.hash);
@@ -31,6 +33,16 @@ function useHashRoute(): string {
 
 export default function App() {
   const hash = useHashRoute();
+
+  // Fonts uploaded into MyCanvas (by Luis or Claude), kept current live.
+  useEffect(() => {
+    void loadCustomFonts();
+    return onLive((event) => {
+      if (event.type === "fonts.changed" || event.type === "reconnected") {
+        void loadCustomFonts();
+      }
+    });
+  }, []);
   const editMatch = /^#\/edit\/(.+)$/.exec(hash);
   const editId = editMatch?.[1];
 

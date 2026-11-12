@@ -379,3 +379,18 @@ export interface DesignLock {
   email: string;
   since: string;
 }
+
+/** A font face uploaded into a workspace (see docs/AGENT_API.md, "Fonts"). */
+export interface CustomFont {
+  /** Its file name, served at /fonts/<id>. */
+  id: string;
+  /** From the font's own name table, or given at upload. */
+  family: string;
+  /** 100–900. */
+  weight: number;
+  italic: boolean;
+  /** Has a weight axis: PDFs embed its default weight only. */
+  variable: boolean;
+  originalName: string;
+  uploadedAt: string;
+}

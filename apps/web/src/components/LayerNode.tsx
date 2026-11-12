@@ -14,6 +14,7 @@ import {
 } from "@mycanvas/shared";
 import { useImage } from "../hooks/useImage";
 import { useEditorStore } from "../store/editorStore";
+import { useCustomFontsVersion } from "../utils/custom-fonts";
 import { ensureFontLoaded } from "../utils/fonts";
 import { roundedPolygonPath, shapePoints } from "../utils/rounded-path";
 import { traceFramePath } from "../utils/frames";
@@ -203,13 +204,16 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
     }
   }, []);
 
+  // Custom fonts can arrive after the text first drew (uploaded meanwhile):
+  // load and redraw again then.
+  const customFontsVersion = useCustomFontsVersion();
   useEffect(() => {
     void ensureFontLoaded(layer.fontFamily, layer.fontStyle).then(() => {
       refreshGlowCache();
       localRef.current?.getLayer()?.batchDraw();
       measureLines();
     });
-  }, [layer.fontFamily, layer.fontStyle, localRef, measureLines, refreshGlowCache]);
+  }, [layer.fontFamily, layer.fontStyle, localRef, measureLines, refreshGlowCache, customFontsVersion]);
 
   useEffect(() => {
     measureLines();

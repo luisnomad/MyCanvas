@@ -1,4 +1,5 @@
 import { FONT_WEIGHTS, GOOGLE_FONTS, parseFontStyle } from "@mycanvas/shared";
+import { customFonts, isCustomFont, setFamiliesChangedHandler } from "./custom-fonts";
 
 const googleFamilies = new Set(GOOGLE_FONTS.map((font) => font.family));
 
@@ -29,6 +30,17 @@ function addStylesheet(href: string): Promise<void> {
   document.head.appendChild(link);
   return ready;
 }
+
+// When custom fonts arrive or change, earlier attempts for those families
+// (which may have drawn a fallback) must run again.
+setFamiliesChangedHandler((families) => {
+  const changed = new Set(families);
+  for (const key of [...done]) {
+    if (changed.has(key.split("|")[0] ?? "")) {
+      done.delete(key);
+    }
+  }
+});
 
 function once(key: string, load: () => Promise<void>): Promise<void> {
   if (done.has(key)) {
@@ -101,6 +113,13 @@ const weightProbes = new Map<string, Promise<number[]>>();
  * per weight everywhere; the browser picks the nearest face.
  */
 export function availableWeights(family: string): Promise<number[]> | null {
+  if (isCustomFont(family)) {
+    const faces = customFonts().filter((font) => font.family === family);
+    // A variable font has every weight.
+    return Promise.resolve(faces.some((font) => font.variable)
+      ? FONT_WEIGHTS.map((entry) => entry.weight)
+      : [...new Set(faces.map((font) => font.weight))].sort((a, b) => a - b));
+  }
   if (!isGoogleFont(family)) {
     return null;
   }

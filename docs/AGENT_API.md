@@ -1,7 +1,7 @@
 # MyCanvas agent API — v1 spec
 
-Status: **decisions settled (2026-11-12). Steps 1 (core), 2 (editor live
-mode) and 3 (renderer) built on branch `agent-api`; steps 4–7 to do.** See
+Status: **decisions settled (2026-11-12). Steps 1–4 (core, editor live
+mode, renderer, fonts) built on branch `agent-api`; steps 5–7 to do.** See
 "Decisions" at the end.
 
 ## Goal
@@ -378,9 +378,10 @@ interface CustomFont {
 `POST /api/fonts/custom`): multipart `file`, optional `family` override.
 The server parses the file with `fontkit` (same library the PDF export already
 uses) to read family, weight and italic, and rejects files it can't parse.
-TTF and OTF are accepted. WOFF/WOFF2 are converted to TTF on upload if a small
-dependency handles it cleanly, otherwise refused with a clear message (pdf-lib
-embeds TTF/OTF). Uploading a second face of a family (e.g. Bold) adds to that
+TTF and OTF are accepted. WOFF/WOFF2 are refused with a message asking for
+the .ttf/.otf (pdf-lib embeds TTF/OTF only), and so are font collections
+(.ttc). Uploading a face that already exists (same family, weight and style)
+replaces it. Uploading a second face of a family (e.g. Bold) adds to that
 family. `DELETE …/fonts/:id` removes one.
 
 **Serving.** `GET /fonts/:file` serves the file from the caller's own

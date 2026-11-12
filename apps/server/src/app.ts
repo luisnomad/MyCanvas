@@ -40,6 +40,7 @@ import {
   writeDesign,
 } from "./designs";
 import { clientIdOf, eventStream, publish } from "./events";
+import { registerFontFiles, registerFontRoutes } from "./font-routes";
 import { dropLock, getLock, listLocks, releaseLock, serialized, takeOver, acquireLock } from "./locks";
 import { STARTER_TEMPLATES, findStarterTemplate } from "./starter-templates";
 import { listSystemFonts } from "./system-fonts";
@@ -80,7 +81,7 @@ app.use("/api/*", cors());
 
 // Every API call and image belongs to the caller's own workspace; nothing
 // is shared between people (see auth.ts for how the caller is identified).
-for (const pattern of ["/api/*", "/assets/*"]) {
+for (const pattern of ["/api/*", "/assets/*", "/fonts/*"]) {
   app.use(pattern, async (c, next) => {
     const result = await identify(c.req.raw.headers);
     if (!result.ok) {
@@ -634,6 +635,9 @@ app.get("/api/fonts/file", async (c) => {
   await writeFile(cacheFile, bytes);
   return c.body(bytes, 200, headers);
 });
+
+registerFontFiles(app);
+registerFontRoutes(app, "/api/fonts/custom");
 
 app.get("/api/fonts/favorites", async (c) => {
   return c.json(await readFavorites(c.get("ws")));

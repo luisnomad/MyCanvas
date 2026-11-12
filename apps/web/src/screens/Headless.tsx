@@ -3,6 +3,7 @@ import { type Design, type DesignPage, type Layer, type TextLayer } from "@mycan
 import { api } from "../api";
 import { CanvasStage } from "../components/CanvasStage";
 import { setHeadlessMode, useEditorStore } from "../store/editorStore";
+import { loadCustomFonts } from "../utils/custom-fonts";
 import { exportDesignImage, getContentLayer, getLayerNode, makeDesignThumbnail } from "../utils/canvas-bridge";
 
 /*
@@ -40,6 +41,8 @@ function nextFrame(): Promise<void> {
 
 /** Opens a design (fresh from the server) on the given page and waits until it is drawn. */
 async function openPage(designId: string, pageIndex: number): Promise<DesignPage> {
+  // Fonts uploaded since the last job.
+  await loadCustomFonts();
   const store = useEditorStore.getState();
   await store.loadDesign(designId);
   const state = useEditorStore.getState();
@@ -163,6 +166,7 @@ const headlessApi = {
 
   /** Lays Markdown out with a format, like "New document". */
   async layoutDocument(formatId: string, markdown: string) {
+    await loadCustomFonts();
     const { layoutDocument, parseContent } = await import("../utils/document-format");
     const format = await api.getDesign(formatId);
     if (format.kind !== "format") {

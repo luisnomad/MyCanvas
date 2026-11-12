@@ -754,6 +754,50 @@ input.context-color::-moz-color-swatch {
   margin: 8px 4px 4px;
 }
 
+.font-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.font-add {
+  margin: 8px 4px 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.font-add:hover {
+  color: var(--accent-hover);
+}
+
+.font-add.disabled {
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.font-add input {
+  display: none;
+}
+
+.font-notice,
+.font-empty {
+  margin: 2px 4px 6px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.font-notice {
+  color: var(--success);
+}
+
+.font-notice.error {
+  color: var(--danger);
+}
+
 .font-row {
   display: flex;
   align-items: center;

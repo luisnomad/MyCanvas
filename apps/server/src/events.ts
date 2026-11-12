@@ -91,8 +91,10 @@ export function eventStream(c: Context, ws: Workspace): Response {
         });
         wake = null;
         if (queue.length === 0 && !stream.aborted) {
-          // Woken by the heartbeat: a comment line keeps proxies from closing the stream.
-          await stream.write(": ping\n\n");
+          // Woken by the heartbeat: keeps proxies from closing the stream and
+          // lets the page notice a dead connection (it reconnects after 60 s
+          // without any event).
+          await stream.writeSSE({ event: "ping", data: "{}" });
         }
       }
     } finally {

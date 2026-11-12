@@ -13,6 +13,7 @@ export default defineConfig({
     proxy: {
       "/api": api,
       "/assets": api,
+      "/fonts": api,
     },
   },
 });

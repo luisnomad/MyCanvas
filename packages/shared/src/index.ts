@@ -5,6 +5,7 @@ export { ASPECT_RATIOS } from "./aspect-ratios";
 export type {
   BehindText,
   BlockKind,
+  CustomFont,
   Design,
   DesignLock,
   DesignPage,

@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { deflateSync } from "node:zlib";
@@ -429,5 +429,62 @@ describe("source files", () => {
     expect((await app.request(`${BASE}/designs/nope/render`, agent())).status).toBe(404);
     const design = await newDesign();
     expect((await app.request(`${BASE}/designs/${design.id}/render?scale=9`, agent())).status).toBe(400);
+  });
+});
+
+describe("custom fonts", () => {
+  // Liberation Sans ships with pdfjs-dist (a web dependency), so the test needs no system fonts.
+  const fontPath = (style: string) => path.resolve(import.meta.dirname, `../../../../node_modules/pdfjs-dist/standard_fonts/LiberationSans-${style}.ttf`);
+
+  async function uploadFont(style: string, extra: Record<string, string> = {}, fileName = `LiberationSans-${style}.ttf`): Promise<Response> {
+    const form = new FormData();
+    form.set("file", new File([new Uint8Array(await readFile(fontPath(style)))], fileName));
+    for (const [key, value] of Object.entries(extra)) {
+      form.set(key, value);
+    }
+    return app.request(`${BASE}/fonts`, agent({ method: "POST", body: form }));
+  }
+
+  it("reads family, weight and style from the font itself", async () => {
+    const regular = await uploadFont("Regular");
+    expect(regular.status).toBe(201);
+    expect(await regular.json()).toMatchObject({ family: "Liberation Sans", weight: 400, italic: false, variable: false, replaced: false });
+    expect(await (await uploadFont("BoldItalic")).json()).toMatchObject({ family: "Liberation Sans", weight: 700, italic: true });
+  });
+
+  it("replaces a face uploaded again and lets the family name be set", async () => {
+    expect(await (await uploadFont("Regular")).json()).toMatchObject({ replaced: true });
+    expect(await (await uploadFont("Italic", { family: "Bonilista Sans" })).json()).toMatchObject({ family: "Bonilista Sans", weight: 400, italic: true });
+    const listed = (await (await app.request(`${BASE}/fonts`, agent())).json()) as { family: string }[];
+    expect(listed.filter((font) => font.family === "Liberation Sans")).toHaveLength(2);
+  });
+
+  it("serves @font-face rules and the files to the editor", async () => {
+    const css = await (await app.request("/api/fonts/custom.css", editor())).text();
+    expect(css).toContain("font-family: \"Liberation Sans\";");
+    expect(css).toContain("font-weight: 700;");
+    expect(css).toContain("font-style: italic;");
+    const file = /url\("\/fonts\/([^"]+)"\)/.exec(css)?.[1] ?? "";
+    const served = await app.request(`/fonts/${file}`, editor());
+    expect(served.status).toBe(200);
+    expect(served.headers.get("content-type")).toBe("font/ttf");
+    expect((await app.request("/fonts/..%2Fsecrets.ttf", editor())).status).toBe(404);
+  });
+
+  it("refuses web fonts, collections and files that aren't fonts", async () => {
+    const woff = await uploadFont("Regular", {}, "font.woff2");
+    expect(((await woff.json()) as { error: string }).error).toContain("WOFF");
+    const form = new FormData();
+    form.set("file", new File(["not a font"], "fake.ttf"));
+    const fake = await app.request(`${BASE}/fonts`, agent({ method: "POST", body: form }));
+    expect(fake.status).toBe(400);
+  });
+
+  it("removes a face", async () => {
+    const listed = (await (await app.request("/api/fonts/custom", editor())).json()) as { id: string; family: string }[];
+    const target = listed.find((font) => font.family === "Bonilista Sans");
+    expect((await app.request(`/api/fonts/custom/${target?.id ?? ""}`, editor({ method: "DELETE" }))).status).toBe(200);
+    const after = (await (await app.request("/api/fonts/custom", editor())).json()) as { family: string }[];
+    expect(after.some((font) => font.family === "Bonilista Sans")).toBe(false);
   });
 });

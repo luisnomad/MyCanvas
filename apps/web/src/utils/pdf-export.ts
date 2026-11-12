@@ -1,4 +1,5 @@
 import fontkit from "@pdf-lib/fontkit";
+import { customFace } from "./custom-fonts";
 import Konva from "konva";
 import {
   type PDFFont,
@@ -137,6 +138,12 @@ class FontSource {
   }
 
   private async load(family: string, weight: number, italic: boolean): Promise<ArrayBuffer | null> {
+    // Fonts uploaded into MyCanvas come first: same file as on the canvas.
+    const custom = customFace(family, weight, italic);
+    if (custom) {
+      const res = await fetch(`/fonts/${encodeURIComponent(custom.id)}`);
+      return res.ok ? res.arrayBuffer() : null;
+    }
     if (isGoogleFont(family)) {
       const res = await fetch(`/api/fonts/file?family=${encodeURIComponent(family)}&weight=${String(weight)}&italic=${italic ? "1" : "0"}`);
       return res.ok ? res.arrayBuffer() : null;
