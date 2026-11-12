@@ -2,6 +2,7 @@ import {
   type Design,
   type DesignPage,
   type FrameContent,
+  type FrameLayer,
   type GradientFill,
   type ImageLayer,
   type Layer,
@@ -9,7 +10,10 @@ import {
   defaultShadow,
   defaultStroke,
   defaultTextEffect,
+  coverContent,
+  frameContentBox,
   newLayer,
+  recoverContent,
 } from "@mycanvas/shared";
 
 /*
@@ -241,11 +245,12 @@ const TYPE_FIELDS: Record<Layer["type"], Record<string, Check>> = {
     adjust,
     flipX: bool,
     flipY: bool,
+    contentRotation: num,
   },
 };
 
 /** Fields that may be set to null to remove them. */
-const CLEARABLE = new Set(["groupId", "gradient", "crop", "adjust", "content", "behindText", "formatRole", "blockSlot", "curve", "cornerRadius"]);
+const CLEARABLE = new Set(["groupId", "gradient", "crop", "adjust", "content", "behindText", "formatRole", "blockSlot", "curve", "cornerRadius", "contentRotation"]);
 
 function checkFields(type: Layer["type"], input: Record<string, unknown>, where: string, extras: string[] = []): Record<string, unknown> {
   const fields = { ...COMMON, ...TYPE_FIELDS[type] };
@@ -281,12 +286,7 @@ function applyFields(layer: Layer, fields: Record<string, unknown>): Layer {
 
 // ---------------------------------------------------------------- geometry
 
-function coverContent(asset: string, img: { width: number; height: number }, frameW: number, frameH: number): FrameContent {
-  const scale = Math.max(frameW / img.width, frameH / img.height);
-  return { asset, scale, offsetX: (frameW - img.width * scale) / 2, offsetY: (frameH - img.height * scale) / 2 };
-}
-
-function checkFrameContent(value: unknown, where: string, layer: { width: number; height: number }, ctx: OpsContext): FrameContent {
+function checkFrameContent(value: unknown, where: string, layer: FrameLayer, ctx: OpsContext): FrameContent {
   const content = value as Record<string, unknown>;
   const asset = nonEmpty(content.asset, `${where}.asset`) as string;
   const size = ctx.assetSize(asset);
@@ -298,7 +298,10 @@ function checkFrameContent(value: unknown, where: string, layer: { width: number
     fail(`${where}.${unknown}`, "unknown field");
   }
   if (content.scale === undefined) {
-    return coverContent(asset, size, layer.width, layer.height);
+    // Placement is in the photo's own box (it differs from the frame's when
+    // the photo keeps its angle while the frame is rotated).
+    const box = frameContentBox(layer);
+    return coverContent(asset, size.width, size.height, box.width, box.height);
   }
   return {
     asset,
@@ -306,6 +309,21 @@ function checkFrameContent(value: unknown, where: string, layer: { width: number
     offsetX: num(content.offsetX ?? 0, `${where}.offsetX`) as number,
     offsetY: num(content.offsetY ?? 0, `${where}.offsetY`) as number,
   };
+}
+
+/**
+ * The frame's photo after a change to its box (size, rotation while the
+ * photo keeps its angle, or turning that setting on or off): zoom and visible
+ * center kept, still covering the frame.
+ */
+function refitContent(before: FrameLayer, after: FrameLayer, content: FrameContent, ctx: OpsContext): FrameContent {
+  const oldBox = frameContentBox(before);
+  const newBox = frameContentBox(after);
+  const size = ctx.assetSize(content.asset);
+  if (!size || (oldBox.width === newBox.width && oldBox.height === newBox.height)) {
+    return content;
+  }
+  return recoverContent(content, size.width, size.height, oldBox.width, oldBox.height, newBox.width, newBox.height);
 }
 
 /**
@@ -544,6 +562,8 @@ export function applyOps(source: Design, ops: unknown, ctx: OpsContext): OpsResu
         let next = applyFields(layer, fields);
         if (next.type === "frame" && fields.content) {
           next = { ...next, content: checkFrameContent(fields.content, `${where}.set.content`, next, ctx) };
+        } else if (next.type === "frame" && layer.type === "frame" && next.content && fields.content === undefined) {
+          next = { ...next, content: refitContent(layer, next, next.content, ctx) };
         }
         if (next.type === "image" && typeof fields.asset === "string" && !ctx.assetSize(fields.asset)) {
           fail(`${where}.set.asset`, `upload "${fields.asset}" not found`);

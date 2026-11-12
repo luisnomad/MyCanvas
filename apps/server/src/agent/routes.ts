@@ -237,7 +237,10 @@ export function registerAgentRoutes(app: Hono<AppEnv>, helpers: AgentHelpers): v
       return c.json({ error: "Body must be JSON: { ops: [...] }" }, 400);
     }
     const sizes = new Map<string, { width: number; height: number }>();
-    for (const asset of assetsIn(body.ops)) {
+    // Photos already in frames too: changing a frame's box re-fits its photo.
+    const current = await readDesign(ws, c.req.param("id"));
+    const framed = (current?.pages ?? []).flatMap((page) => page.layers.flatMap((layer) => (layer.type === "frame" && layer.content ? [layer.content.asset] : [])));
+    for (const asset of new Set([...assetsIn(body.ops), ...framed])) {
       if (!helpers.isSafeAssetFile(asset)) {
         continue;
       }

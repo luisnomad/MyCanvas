@@ -77,6 +77,16 @@ export function FrameSection({ layer, patch, commit }: SectionProps<FrameLayer>)
         </button>
       )}
       {layer.content && <p className="muted field-note">Double-click the frame to pan &amp; zoom the image.</p>}
+      <label className="ai-check" title="The image keeps its current angle on the page when you rotate the frame">
+        <input
+          type="checkbox"
+          checked={layer.contentRotation !== undefined}
+          onChange={(e) => {
+            updateLayer(layer.id, { contentRotation: e.target.checked ? layer.rotation : undefined });
+          }}
+        />
+        Keep the image&apos;s angle when rotating the frame
+      </label>
       {pickerOpen && (
         <div className="asset-grid frame-asset-picker">
           {assets.length === 0 && <p className="muted">No uploads yet — drop or upload an image first.</p>}

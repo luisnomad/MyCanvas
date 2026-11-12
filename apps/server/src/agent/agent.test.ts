@@ -239,6 +239,25 @@ describe("designs and ops", () => {
     expect(missing.status).toBe(400);
   });
 
+  it("keeps a frame's photo at its own angle when contentRotation is set", async () => {
+    const design = await newDesign();
+    const photo = await upload(400, 200, "landscape.png");
+    // A 200×100 hexagon turned 90°, photo kept upright: the photo's box is 100×200.
+    const res = await ops(design.id, [
+      { op: "addLayer", layer: { type: "frame", id: "hex", shape: "hexagon", x: 0, y: 0, width: 200, height: 100, rotation: 90, contentRotation: 0, content: { asset: photo.asset } } },
+    ]);
+    expect(res.status).toBe(200);
+    let frame = (await getDesign(design.id)).pages[0]?.layers[0];
+    expect(frame).toMatchObject({ rotation: 90, contentRotation: 0, content: { scale: 1, offsetX: -150, offsetY: 0 } });
+    // Back to turning with the frame: re-covered for the frame's own 200×100 box.
+    expect((await ops(design.id, [{ op: "updateLayer", id: "hex", set: { contentRotation: null } }])).status).toBe(200);
+    frame = (await getDesign(design.id)).pages[0]?.layers[0];
+    expect(frame).not.toHaveProperty("contentRotation");
+    expect(frame).toMatchObject({ content: { scale: 0.5, offsetX: 0, offsetY: 0 } });
+    const bad = await ops(design.id, [{ op: "updateLayer", id: "hex", set: { contentRotation: "upright" } }]);
+    expect(bad.status).toBe(400);
+  });
+
   it("adds, copies, moves and deletes pages", async () => {
     const design = await newDesign();
     await ops(design.id, [{ op: "addLayer", layer: { type: "rect", id: "r1" } }]);

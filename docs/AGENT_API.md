@@ -279,6 +279,13 @@ type Position = "top" | "bottom" | number | { above: string } | { below: string 
   server reads the image's size; with only `width` (or `height`) it keeps the
   aspect ratio; `fit: "cover" | "contain"` fits it into the given box (cover
   crops via `crop`). Frames take `content: { asset }` and get a cover fit.
+- Frames: `contentRotation` (degrees) keeps the photo at that angle on the
+  page whatever the frame's `rotation` (editor: "Keep the image's angle when
+  rotating the frame"). E.g. pointy-top hexagons are `shape: "hexagon"`,
+  `rotation: 90`, `contentRotation: 0`: the photo stays upright and Luis can
+  swap it by hand. `null` removes it (the photo turns with the frame again).
+  Changing a frame's size, rotation or `contentRotation` re-fits its photo
+  (zoom and visible center kept).
 - `updateLayer.set` merges shallowly; nested objects (`effect`, `crop`,
   `gradient`) are replaced whole. The server validates against the layer
   types and rejects unknown fields, wrong types or `type` changes.

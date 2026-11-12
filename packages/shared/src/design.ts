@@ -239,6 +239,12 @@ export interface FrameLayer extends LayerBase {
   adjust?: ImageAdjustments;
   flipX?: boolean;
   flipY?: boolean;
+  /**
+   * The photo's angle on the page, in degrees. Set: the photo keeps that
+   * angle when the frame rotates (content offsets are then in the box from
+   * frameContentBox). Absent: the photo turns with the frame.
+   */
+  contentRotation?: number;
 }
 
 export type Layer = TextLayer | ImageLayer | RectLayer | LineLayer | ShapeLayer | FrameLayer;

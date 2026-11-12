@@ -14,12 +14,15 @@ import {
   type PageContent,
   type TextLayer,
   defaultShadow,
+  frameContentBox,
   normalizeDesign,
+  recoverContent,
 } from "@mycanvas/shared";
 import { create } from "zustand";
 import { ApiError, type DesignUpdate, api } from "../api";
 import { makeDesignThumbnail } from "../utils/canvas-bridge";
 import { ensureFontsLoaded } from "../utils/fonts";
+import { getCachedImageSize } from "../hooks/useImage";
 
 export type SaveStatus = "saved" | "saving" | "dirty";
 export type LoadStatus = "loading" | "ready" | "not-found" | "error";
@@ -88,6 +91,28 @@ type TextStyle = Pick<TextLayer,
   | "shadow" | "stroke" | "opacity">;
 
 const HISTORY_LIMIT = 100;
+
+/**
+ * Applies a patch to a layer. A frame whose photo box changes (resize, or a
+ * rotation while the photo keeps its angle) gets its photo re-covered, unless
+ * the patch places the photo itself.
+ */
+function patchLayer(layer: Layer, patch: LayerPatch): Layer {
+  const next = { ...layer, ...patch } as Layer;
+  if (layer.type !== "frame" || next.type !== "frame" || !layer.content || !next.content || "content" in patch) {
+    return next;
+  }
+  const before = frameContentBox(layer);
+  const after = frameContentBox(next);
+  if (before.width === after.width && before.height === after.height) {
+    return next;
+  }
+  const natural = getCachedImageSize(`/assets/${layer.content.asset}`);
+  if (!natural) {
+    return next;
+  }
+  return { ...next, content: recoverContent(layer.content, natural.width, natural.height, before.width, before.height, after.width, after.height) };
+}
 const AUTOSAVE_DELAY_MS = 800;
 
 export interface EditorStore {
@@ -808,7 +833,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         (design) => ({
           // The patch only carries fields valid for the target's type; the
           // spread widens to the intersection, so narrow it back explicitly.
-          layers: design.layers.map((layer) => (layer.id === id ? ({ ...layer, ...patch }) as Layer : layer)),
+          layers: design.layers.map((layer) => (layer.id === id ? patchLayer(layer, patch) : layer)),
         }),
         transient,
       );
@@ -831,7 +856,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         (current) => ({
           layers: current.layers.map((layer) => {
             const patch = patches.get(layer.id);
-            return patch ? ({ ...layer, ...patch }) as Layer : layer;
+            return patch ? patchLayer(layer, patch) : layer;
           }),
         }),
         false,
@@ -1287,7 +1312,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
           ...page,
           layers: page.layers.map((layer) => {
             const patch = patches.get(layer.id);
-            return patch && !(layer.locked && !patchAllowedOnLocked(patch)) ? ({ ...layer, ...patch }) as Layer : layer;
+            return patch && !(layer.locked && !patchAllowedOnLocked(patch)) ? patchLayer(layer, patch) : layer;
           }),
         })),
         activePageId,

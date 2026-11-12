@@ -11,13 +11,14 @@ import {
   type ShapeLayer,
   type StrokeEffect,
   type TextLayer,
+  frameContentBox,
 } from "@mycanvas/shared";
 import { useImage } from "../hooks/useImage";
 import { useEditorStore } from "../store/editorStore";
 import { useCustomFontsVersion } from "../utils/custom-fonts";
 import { ensureFontLoaded } from "../utils/fonts";
 import { roundedPolygonPath, shapePoints } from "../utils/rounded-path";
-import { traceFramePath } from "../utils/frames";
+import { FRAME_CONTENT_NAME, traceFramePath } from "../utils/frames";
 import { TEXT_MAIN_NAME, behindTextOutlineSceneFunc } from "../utils/behind-text";
 import { gradientFillProps } from "../utils/gradients";
 import { imageLookSceneFunc } from "../utils/image-filters";
@@ -539,6 +540,7 @@ function FrameNode({ layer, registerRef }: { layer: FrameLayer } & LayerNodeProp
   const content = layer.content;
   const image = useImage(content ? `/assets/${content.asset}` : undefined);
   const radius = layer.cornerRadius ?? 0;
+  const box = frameContentBox(layer);
 
   const setFrameRefs = (node: Konva.Group | null) => {
     setRefs(node);
@@ -600,18 +602,32 @@ function FrameNode({ layer, registerRef }: { layer: FrameLayer } & LayerNodeProp
       <Rect width={layer.width} height={layer.height} fill="rgba(0,0,0,0)" />
       {content && image
         ? (
-            <KonvaImage
-              image={image}
-              x={content.offsetX}
-              y={content.offsetY}
-              scaleX={content.scale}
-              scaleY={content.scale}
-              sceneFunc={imageLookSceneFunc(layer, {
-                x: (layer.width / 2 - content.offsetX) / content.scale,
-                y: (layer.height / 2 - content.offsetY) / content.scale,
-              })}
+            // The photo's own space (frameContentBox): the frame's box, or a
+            // counter-turned box when the photo keeps its angle on the page.
+            <Group
+              name={FRAME_CONTENT_NAME}
+              x={layer.width / 2}
+              y={layer.height / 2}
+              offsetX={box.width / 2}
+              offsetY={box.height / 2}
+              width={box.width}
+              height={box.height}
+              rotation={box.angle}
               listening={false}
-            />
+            >
+              <KonvaImage
+                image={image}
+                x={content.offsetX}
+                y={content.offsetY}
+                scaleX={content.scale}
+                scaleY={content.scale}
+                sceneFunc={imageLookSceneFunc(layer, {
+                  x: (box.width / 2 - content.offsetX) / content.scale,
+                  y: (box.height / 2 - content.offsetY) / content.scale,
+                })}
+                listening={false}
+              />
+            </Group>
           )
         : <FramePlaceholder width={layer.width} height={layer.height} />}
     </Group>

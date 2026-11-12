@@ -1,13 +1,81 @@
-import { type FrameContent, type FrameShape } from "@mycanvas/shared";
+import Konva from "konva";
+import { type ContentBox, type FrameContent, type FrameShape, coverContent, frameContentBox, recoverContent } from "@mycanvas/shared";
 import { getCachedImageSize } from "../hooks/useImage";
 import { useEditorStore } from "../store/editorStore";
 import { roundedPolygonPath, shapePoints, traceRoundedPolygon } from "./rounded-path";
+
+export { clampContent, coverContent, coverScale, recoverContent } from "@mycanvas/shared";
 
 /**
  * Frame (image container) helpers: cover-fit math for content placement and
  * the shared geometry (clip path, drawer thumbnails). Shapes reuse the
  * rounded-polygon helper so corner radius works on frames too.
  */
+
+/** Name of the group inside a frame that holds the photo (its own space). */
+export const FRAME_CONTENT_NAME = "frame-content";
+
+/** The photo's holder inside a frame node, if the frame has a photo. */
+export function frameContentHolder<T extends Konva.Container>(frame: T): Konva.Group | undefined {
+  const holder = frame.findOne(`.${FRAME_CONTENT_NAME}`);
+  return holder instanceof Konva.Group ? holder : undefined;
+}
+
+/**
+ * Lays the photo's holder out for the frame node's live size and rotation
+ * (during a drag, before the store has the new values). Returns the box it
+ * had and the box it has now, so callers can re-cover the photo.
+ */
+export function syncContentHolder<T extends Konva.Container>(
+  frame: T,
+  contentRotation: number | undefined,
+): { before: ContentBox; after: ContentBox } | null {
+  const holder = frameContentHolder(frame);
+  if (!holder) {
+    return null;
+  }
+  const before = { width: holder.width(), height: holder.height(), angle: holder.rotation() };
+  const after = frameContentBox({ width: frame.width(), height: frame.height(), rotation: frame.rotation(), contentRotation });
+  holder.setAttrs({
+    x: frame.width() / 2,
+    y: frame.height() / 2,
+    offsetX: after.width / 2,
+    offsetY: after.height / 2,
+    width: after.width,
+    height: after.height,
+    rotation: after.angle,
+  });
+  return { before, after };
+}
+
+/**
+ * Live follow-up while a frame is resized or rotated: re-lays the holder and
+ * re-covers the photo for the new box (zoom ratio and visible center kept).
+ */
+export function followFrameBox<T extends Konva.Container>(frame: T, content: FrameContent | undefined, contentRotation: number | undefined): void {
+  const synced = syncContentHolder(frame, contentRotation);
+  const imageNode = frame.findOne("Image");
+  if (!content || !synced || !(imageNode instanceof Konva.Image)) {
+    return;
+  }
+  const natural = getCachedImageSize(`/assets/${content.asset}`);
+  if (!natural) {
+    return;
+  }
+  const next = recoverContent(
+    { asset: content.asset, offsetX: imageNode.x(), offsetY: imageNode.y(), scale: imageNode.scaleX() },
+    natural.width,
+    natural.height,
+    synced.before.width,
+    synced.before.height,
+    synced.after.width,
+    synced.after.height,
+  );
+  imageNode.x(next.offsetX);
+  imageNode.y(next.offsetY);
+  imageNode.scaleX(next.scale);
+  imageNode.scaleY(next.scale);
+}
 
 /** dataTransfer MIME for Uploads-panel asset drags (drop = fill a frame). */
 export const ASSET_DRAG_MIME = "application/x-mycanvas-asset";
@@ -26,66 +94,6 @@ export function setCurrentAssetDrag(asset: string | null): void {
 
 export function getCurrentAssetDrag(): string | null {
   return currentAssetDrag;
-}
-
-/** Cover-fit scale: the smallest scale at which the image covers the frame. */
-export function coverScale(imgW: number, imgH: number, frameW: number, frameH: number): number {
-  return Math.max(frameW / imgW, frameH / imgH);
-}
-
-/** Clamp offsets so the image always covers the frame (no empty edges). */
-export function clampContent(
-  content: FrameContent,
-  imgW: number,
-  imgH: number,
-  frameW: number,
-  frameH: number,
-): FrameContent {
-  const scale = Math.max(content.scale, coverScale(imgW, imgH, frameW, frameH));
-  return {
-    ...content,
-    scale,
-    offsetX: Math.min(0, Math.max(frameW - imgW * scale, content.offsetX)),
-    offsetY: Math.min(0, Math.max(frameH - imgH * scale, content.offsetY)),
-  };
-}
-
-/** Initial content placement: cover-fit, centered. */
-export function coverContent(asset: string, imgW: number, imgH: number, frameW: number, frameH: number): FrameContent {
-  const scale = coverScale(imgW, imgH, frameW, frameH);
-  return {
-    asset,
-    scale,
-    offsetX: (frameW - imgW * scale) / 2,
-    offsetY: (frameH - imgH * scale) / 2,
-  };
-}
-
-/**
- * Re-cover after the frame box changed (middle-anchor resize): keeps the
- * user's zoom ratio over cover and the visible center, then clamps.
- */
-export function recoverContent(
-  content: FrameContent,
-  imgW: number,
-  imgH: number,
-  oldW: number,
-  oldH: number,
-  newW: number,
-  newH: number,
-): FrameContent {
-  const zoomRatio = content.scale / coverScale(imgW, imgH, oldW, oldH);
-  const scale = Math.max(coverScale(imgW, imgH, newW, newH) * zoomRatio, coverScale(imgW, imgH, newW, newH));
-  // Content-image coordinate currently at the frame center stays centered.
-  const centerX = (oldW / 2 - content.offsetX) / content.scale;
-  const centerY = (oldH / 2 - content.offsetY) / content.scale;
-  return clampContent(
-    { asset: content.asset, scale, offsetX: newW / 2 - centerX * scale, offsetY: newH / 2 - centerY * scale },
-    imgW,
-    imgH,
-    newW,
-    newH,
-  );
 }
 
 /**
@@ -159,7 +167,8 @@ export async function fillFrame(layerId: string, asset: string): Promise<void> {
     return;
   }
   const size = getCachedImageSize(`/assets/${asset}`) ?? (await loadImageSize(`/assets/${asset}`));
+  const box = frameContentBox(layer);
   store.updateLayer(layerId, {
-    content: coverContent(asset, size.width, size.height, layer.width, layer.height),
+    content: coverContent(asset, size.width, size.height, box.width, box.height),
   });
 }
