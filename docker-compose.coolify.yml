@@ -22,6 +22,8 @@ services:
       MYCANVAS_ALLOWED_EMAILS: ${MYCANVAS_ALLOWED_EMAILS:-}
       # Encrypts stored AI keys; keep it out of the data volume and backups.
       MYCANVAS_SECRET_KEY: ${MYCANVAS_SECRET_KEY:-}
+      # Public host for share links copied from canva.local (/s/<token>).
+      MYCANVAS_PUBLIC_URL: ${MYCANVAS_PUBLIC_URL:-}
     volumes:
       - mycanvas-data:/data
 
