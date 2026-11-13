@@ -2,19 +2,39 @@ import fontkit from "@pdf-lib/fontkit";
 import Konva from "konva";
 import {
   type PDFFont,
+  type PDFName,
+  type PDFOperator,
   type PDFPage,
+  LineCapStyle,
+  LineJoinStyle,
+  PDFContentStream,
   PDFDocument,
+  appendBezierCurve,
+  closePath,
   concatTransformationMatrix,
+  drawObject,
+  fill,
+  fillAndStroke,
+  lineTo,
+  moveTo,
   popGraphicsState,
   pushGraphicsState,
   rgb,
   setCharacterSpacing,
+  setFillingRgbColor,
+  setGraphicsState,
+  setLineCap,
+  setLineJoin,
+  setLineWidth,
+  setStrokingRgbColor,
+  stroke,
 } from "pdf-lib";
 import { type Layer, type TextLayer, parseFontStyle } from "@mycanvas/shared";
 import { useEditorStore } from "../store/editorStore";
 import { TEXT_MAIN_NAME } from "./behind-text";
 import { getContentLayer, getLayerNode } from "./canvas-bridge";
 import { ensureFontsLoaded, isGoogleFont } from "./fonts";
+import { type VectorShape, pathBounds, pdfLayerMatrix, vectorShapeForLayer } from "./pdf-vector";
 
 /**
  * Multi-page PDF export with real text.
@@ -23,9 +43,12 @@ import { ensureFontsLoaded, isGoogleFont } from "./fonts";
  * - plain text layers (no effect, not curved) are drawn as PDF text with
  *   the font embedded (subset), at the exact baselines Konva uses — crisp,
  *   searchable and copyable;
- * - everything else (background, images, shapes, frames, styled or curved
- *   text, effects) is rendered by Konva itself into image slices cropped
- *   to their content, so it looks exactly like the editor.
+ * - rects, shapes and lines with solid paint (no gradient or shadow) are
+ *   drawn as PDF paths from the design model (see pdf-vector.ts), with the
+ *   geometry the editor draws;
+ * - everything else (background, images, frames, styled or curved text,
+ *   gradients, shadows, effects) is rendered by Konva itself into image
+ *   slices cropped to their content, so it looks exactly like the editor.
  * A text layer whose font file isn't available, or that uses characters
  * the font lacks, falls back to an image slice.
  */
@@ -39,7 +62,10 @@ export interface PdfExportOptions {
   onProgress?: (page: number, total: number) => void;
 }
 
-type Slice = { kind: "raster"; nodes: Konva.Node[]; withBackground: boolean } | { kind: "text"; layer: TextLayer; node: Konva.Text };
+type Slice =
+  | { kind: "raster"; nodes: Konva.Node[]; withBackground: boolean }
+  | { kind: "text"; layer: TextLayer; node: Konva.Text }
+  | { kind: "vector"; shape: VectorShape };
 
 /**
  * Waits for the next paint. Hidden tabs pause animation frames, so a timer
@@ -264,6 +290,97 @@ function drawText(page: PDFPage, slice: Extract<Slice, { kind: "text" }>, font: 
   page.pushOperators(popGraphicsState());
 }
 
+/** An ExtGState with these alphas, on `page`'s resources; null when both are 1. */
+function alphaState(pdf: PDFDocument, page: PDFPage, fillAlpha: number, strokeAlpha: number): PDFName | null {
+  if (fillAlpha >= 1 && strokeAlpha >= 1) {
+    return null;
+  }
+  const ref = pdf.context.register(pdf.context.obj({ Type: "ExtGState", ca: fillAlpha, CA: strokeAlpha }));
+  return page.node.newExtGState("GS", ref);
+}
+
+/** Path construction plus paint for a vector shape (alphas already in the graphics state). */
+function shapeOperators(shape: VectorShape): PDFOperator[] {
+  const ops: PDFOperator[] = [];
+  for (const command of shape.path) {
+    if (command.op === "M") {
+      ops.push(moveTo(command.x, command.y));
+    } else if (command.op === "L") {
+      ops.push(lineTo(command.x, command.y));
+    } else if (command.op === "C") {
+      ops.push(appendBezierCurve(command.x1, command.y1, command.x2, command.y2, command.x, command.y));
+    } else {
+      ops.push(closePath());
+    }
+  }
+  const { fill: fillColor, stroke: strokeStyle } = shape;
+  if (fillColor) {
+    ops.push(setFillingRgbColor(fillColor.r, fillColor.g, fillColor.b));
+  }
+  if (strokeStyle) {
+    const cap = strokeStyle.cap === "round" ? LineCapStyle.Round : strokeStyle.cap === "square" ? LineCapStyle.Projecting : LineCapStyle.Butt;
+    // Canvas defaults: miter joins, miter limit 10 (also PDF's default).
+    ops.push(
+      setStrokingRgbColor(strokeStyle.color.r, strokeStyle.color.g, strokeStyle.color.b),
+      setLineWidth(strokeStyle.width),
+      setLineCap(cap),
+      setLineJoin(LineJoinStyle.Miter),
+    );
+  }
+  ops.push(fillColor && strokeStyle ? fillAndStroke() : fillColor ? fill() : stroke());
+  return ops;
+}
+
+/**
+ * A rect/shape/line as PDF paths in its own local space under the layer's
+ * transform. Fill+stroke under opacity goes through a transparency group,
+ * matching Konva's buffered draw.
+ */
+function drawVector(pdf: PDFDocument, page: PDFPage, shape: VectorShape, designHeight: number) {
+  if ((!shape.fill && !shape.stroke) || shape.opacity <= 0 || shape.path.length === 0) {
+    return;
+  }
+  const [a, b, c, d, e, f] = pdfLayerMatrix(shape.matrix, designHeight, POINTS_PER_PX);
+  const fillAlpha = shape.fill?.a ?? 1;
+  const strokeAlpha = shape.stroke?.color.a ?? 1;
+  const ops: PDFOperator[] = [pushGraphicsState(), concatTransformationMatrix(a, b, c, d, e, f)];
+  if (shape.group) {
+    // Inner alphas live in the group; the group is composited at layer opacity.
+    const inner: PDFOperator[] = [];
+    const resources: Record<string, unknown> = {};
+    if (fillAlpha < 1 || strokeAlpha < 1) {
+      const ref = pdf.context.register(pdf.context.obj({ Type: "ExtGState", ca: fillAlpha, CA: strokeAlpha }));
+      resources.ExtGState = { GS0: ref };
+      inner.push(setGraphicsState("GS0"));
+    }
+    inner.push(...shapeOperators(shape));
+    // Generous box: strokes, round caps and miters stay inside it.
+    const pad = (shape.stroke?.width ?? 0) * 6 + 2;
+    const dict = pdf.context.obj({
+      Type: "XObject",
+      Subtype: "Form",
+      BBox: pathBounds(shape.path, pad),
+      Group: { S: "Transparency", CS: "DeviceRGB" },
+      Resources: resources as never,
+    });
+    const form = pdf.context.register(PDFContentStream.of(dict, inner));
+    const name = page.node.newXObject("Fm", form);
+    const outer = alphaState(pdf, page, shape.opacity, shape.opacity);
+    if (outer) {
+      ops.push(setGraphicsState(outer));
+    }
+    ops.push(drawObject(name));
+  } else {
+    const state = alphaState(pdf, page, fillAlpha * shape.opacity, strokeAlpha * shape.opacity);
+    if (state) {
+      ops.push(setGraphicsState(state));
+    }
+    ops.push(...shapeOperators(shape));
+  }
+  ops.push(popGraphicsState());
+  page.pushOperators(...ops);
+}
+
 /** Renders `nodes` (and nothing else) of the content layer into an image slice. */
 function rasterize(contentLayer: Konva.Layer, slice: Extract<Slice, { kind: "raster" }>, width: number, height: number, pixelRatio: number) {
   const keep = new Set(slice.nodes);
@@ -313,6 +430,17 @@ async function sliceOpenPage(layers: Layer[], fonts: FontSource, contentLayer: K
       vector.set(group, { layer, node: main });
     }
   }
+  const shapes = new Map<Konva.Node, VectorShape>();
+  for (const layer of layers) {
+    if (!layer.visible || (layer.type !== "rect" && layer.type !== "shape" && layer.type !== "line")) {
+      continue;
+    }
+    const node = getLayerNode(layer.id);
+    const shape = vectorShapeForLayer(layer);
+    if (node && shape) {
+      shapes.set(node, shape);
+    }
+  }
   // Content-layer children in z-order. Unregistered helpers (the background
   // rect, per-layer overlays) travel with the node right before them.
   const slices: Slice[] = [];
@@ -322,6 +450,12 @@ async function sliceOpenPage(layers: Layer[], fonts: FontSource, contentLayer: K
     if (text) {
       raster = null;
       slices.push({ kind: "text", ...text });
+      continue;
+    }
+    const shape = shapes.get(child);
+    if (shape) {
+      raster = null;
+      slices.push({ kind: "vector", shape });
       continue;
     }
     if (!raster) {
@@ -374,6 +508,10 @@ export async function exportDesignPdf(options: PdfExportOptions): Promise<Uint8A
           if (font) {
             drawText(page, slice, font, design.height);
           }
+          continue;
+        }
+        if (slice.kind === "vector") {
+          drawVector(pdf, page, slice.shape, design.height);
           continue;
         }
         const image = rasterize(contentLayer, slice, design.width, design.height, options.pixelRatio);
