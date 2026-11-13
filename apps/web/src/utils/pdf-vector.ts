@@ -1,4 +1,4 @@
-import { type Layer, type LineLayer, type RectLayer, type ShadowEffect, type ShapeLayer, type StrokeEffect } from "@mycanvas/shared";
+import { type GradientFill, type Layer, type LineLayer, type RectLayer, type ShadowEffect, type ShapeLayer, type StrokeEffect } from "@mycanvas/shared";
 import { roundedPolygonPath, shapePoints } from "./rounded-path";
 
 /**
@@ -34,11 +34,24 @@ export interface VectorStroke {
   cap: "butt" | "round" | "square";
 }
 
+/** A gradient as a PDF shading, in the shape's local space (y down). */
+export interface ShadingSpec {
+  type: "axial" | "radial";
+  /** Axial: [x0, y0, x1, y1]; radial: [x0, y0, r0, x1, y1, r1]. */
+  coords: number[];
+  /** Two or more stops, offsets ascending in 0…1. Colors are opaque; see `alpha`. */
+  stops: { offset: number; color: Rgba }[];
+  /** The stops' shared alpha (a per-stop alpha can't be a plain shading). */
+  alpha: number;
+}
+
 export interface VectorShape {
   /** Layer-local → design px (Konva's node transform). */
   matrix: Matrix;
   path: PathCommand[];
   fill: Rgba | null;
+  /** Painted inside the path instead of `fill` when present. */
+  gradient?: ShadingSpec;
   stroke: VectorStroke | null;
   /** Layer opacity, 0–1. */
   opacity: number;
@@ -281,6 +294,48 @@ export function shapeLayerPath(layer: Pick<ShapeLayer, "shape" | "width" | "heig
   }
 }
 
+/**
+ * The gradient as Konva's gradientFillProps paints it across a w×h box at
+ * (originX, originY) in the shape's local space: a linear gradient runs
+ * through the box center along `angle`, its stops spanning the box's
+ * extent in that direction; a radial one runs from the center to the
+ * box's half diagonal. Null when a stop color can't be read or the stops
+ * don't share one alpha.
+ */
+export function gradientShading(gradient: GradientFill | undefined, w: number, h: number, originX = 0, originY = 0): ShadingSpec | null {
+  if (!gradient || gradient.stops.length < 2) {
+    return null;
+  }
+  const stops: ShadingSpec["stops"] = [];
+  let alpha: number | null = null;
+  for (const stop of gradient.stops) {
+    const color = parseCssColor(stop.color);
+    if (!color || !Number.isFinite(stop.offset)) {
+      return null;
+    }
+    if (alpha !== null && Math.abs(color.a - alpha) > 0.01) {
+      return null;
+    }
+    alpha = color.a;
+    stops.push({ offset: Math.min(1, Math.max(0, stop.offset)), color: { ...color, a: 1 } });
+  }
+  for (let i = 1; i < stops.length; i += 1) {
+    if ((stops[i]?.offset ?? 0) < (stops[i - 1]?.offset ?? 0)) {
+      return null;
+    }
+  }
+  const cx = originX + w / 2;
+  const cy = originY + h / 2;
+  if (gradient.type === "radial") {
+    return { type: "radial", coords: [cx, cy, 0, cx, cy, Math.hypot(w, h) / 2], stops, alpha: alpha ?? 1 };
+  }
+  const radians = (gradient.angle * Math.PI) / 180;
+  const dx = Math.cos(radians);
+  const dy = Math.sin(radians);
+  const half = (Math.abs(w * dx) + Math.abs(h * dy)) / 2;
+  return { type: "axial", coords: [cx - dx * half, cy - dy * half, cx + dx * half, cy + dy * half], stops, alpha: alpha ?? 1 };
+}
+
 /** A shadow Konva would actually paint. */
 export function shadowVisible(shadow: ShadowEffect | undefined): boolean {
   if (!shadow?.enabled || !(shadow.opacity > 0)) {
@@ -310,7 +365,7 @@ export function vectorFallbackReason(layer: Layer): string | null {
   if (shadowVisible(layer.shadow)) {
     return "shadow";
   }
-  if (layer.type !== "line" && layer.gradient && layer.gradient.stops.length >= 2) {
+  if (layer.type !== "line" && layer.gradient && layer.gradient.stops.length >= 2 && !gradientShading(layer.gradient, layer.width, layer.height)) {
     return "gradient";
   }
   return null;
@@ -325,14 +380,17 @@ function fillShape(layer: RectLayer | ShapeLayer, path: PathCommand[]): VectorSh
   if (!ok) {
     return null;
   }
+  const gradient = gradientShading(layer.gradient, layer.width, layer.height) ?? undefined;
   const opacity = Math.min(1, Math.max(0, layer.opacity));
+  const painted = gradient ? gradient.alpha > 0 : Boolean(fill && fill.a > 0);
   return {
     matrix: layerMatrix(layer),
     path,
-    fill: fill && fill.a > 0 ? fill : null,
+    fill: !gradient && fill && fill.a > 0 ? fill : null,
+    ...(gradient && gradient.alpha > 0 ? { gradient } : {}),
     stroke: stroke && stroke.color.a > 0 ? stroke : null,
     opacity,
-    group: Boolean(fill && fill.a > 0 && stroke && stroke.color.a > 0 && opacity < 1),
+    group: Boolean(painted && stroke && stroke.color.a > 0 && opacity < 1),
   };
 }
 
@@ -372,6 +430,30 @@ export function vectorShapeForLayer(layer: Layer): VectorShape | null {
     default:
       return null;
   }
+}
+
+/**
+ * The page background as a vector shape: a solid color rectangle or a
+ * gradient shading over the page. Null when transparent or unreadable.
+ */
+export function backgroundShape(background: string, gradient: GradientFill | undefined, width: number, height: number): VectorShape | null {
+  if (background === "transparent") {
+    return null;
+  }
+  const shading = gradientShading(gradient, width, height);
+  const fill = shading ? null : parseCssColor(background);
+  if (!shading && !fill) {
+    return null;
+  }
+  return {
+    matrix: [1, 0, 0, 1, 0, 0],
+    path: rectPath(width, height, 0),
+    fill: fill && fill.a > 0 ? fill : null,
+    ...(shading && shading.alpha > 0 ? { gradient: shading } : {}),
+    stroke: null,
+    opacity: 1,
+    group: false,
+  };
 }
 
 /**

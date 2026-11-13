@@ -4,6 +4,8 @@ import { exportPixelRatio } from "./export-size";
 import {
   type PathCommand,
   applyMatrix,
+  backgroundShape,
+  gradientShading,
   ellipsePath,
   layerMatrix,
   parseCssColor,
@@ -228,8 +230,8 @@ describe("vectorShapeForLayer", () => {
     expect(v?.opacity).toBe(0.4);
   });
 
-  it("falls back to raster for gradients, shadows and unreadable colors", () => {
-    const gradient = { type: "linear" as const, angle: 0, stops: [{ offset: 0, color: "#000" }, { offset: 1, color: "#fff" }] };
+  it("falls back to raster for per-stop alpha gradients, shadows and unreadable colors", () => {
+    const gradient = { type: "linear" as const, angle: 0, stops: [{ offset: 0, color: "#00000080" }, { offset: 1, color: "#fff" }] };
     expect(vectorFallbackReason(rect({ gradient }))).toBe("gradient");
     expect(vectorShapeForLayer(shape({ gradient }))).toBeNull();
     expect(vectorShapeForLayer(line({ shadow: { ...noShadow, enabled: true, opacity: 0.5, blur: 4 } }))).toBeNull();
@@ -255,5 +257,50 @@ describe("exportPixelRatio", () => {
 
   it("treats bad input as 1x", () => {
     expect(exportPixelRatio("custom", 0, 1000, 1000).ratio).toBe(1);
+  });
+});
+
+describe("gradientShading", () => {
+  const stops = [{ offset: 0, color: "#ff0000" }, { offset: 1, color: "#0000ff" }];
+
+  it("runs a linear gradient through the box center along the angle, like gradientFillProps", () => {
+    expect(gradientShading({ type: "linear", angle: 0, stops }, 200, 100)?.coords).toEqual([0, 50, 200, 50]);
+    const down = gradientShading({ type: "linear", angle: 90, stops }, 200, 100)?.coords ?? [];
+    expect(down.map((v) => Math.round(v * 1e6) / 1e6 + 0)).toEqual([100, 0, 100, 100]);
+    // Ellipse-style origin at (-w/2, -h/2): the center sits at (0, 0).
+    expect(gradientShading({ type: "linear", angle: 0, stops }, 200, 100, -100, -50)?.coords).toEqual([-100, 0, 100, 0]);
+  });
+
+  it("runs a radial gradient from the center to the half diagonal", () => {
+    const spec = gradientShading({ type: "radial", angle: 0, stops }, 300, 400);
+    expect(spec?.type).toBe("radial");
+    expect(spec?.coords).toEqual([150, 200, 0, 150, 200, 250]);
+  });
+
+  it("keeps opaque stop colors and one shared alpha", () => {
+    const spec = gradientShading({ type: "linear", angle: 0, stops: [{ offset: 0, color: "rgba(255,0,0,0.5)" }, { offset: 1, color: "#0000ff80" }] }, 10, 10);
+    expect(spec?.alpha).toBeCloseTo(0.5, 1);
+    expect(spec?.stops.every((stop) => stop.color.a === 1)).toBe(true);
+    expect(gradientShading({ type: "linear", angle: 0, stops: [{ offset: 0, color: "#f00" }, { offset: 1, color: "#0000ff80" }] }, 10, 10)).toBeNull();
+    expect(gradientShading({ type: "linear", angle: 0, stops: [{ offset: 0, color: "#f00" }] }, 10, 10)).toBeNull();
+    expect(gradientShading({ type: "linear", angle: 0, stops: [{ offset: 1, color: "#f00" }, { offset: 0, color: "#00f" }] }, 10, 10)).toBeNull();
+  });
+
+  it("makes gradient shapes vector", () => {
+    const v = vectorShapeForLayer(rect({ gradient: { type: "linear", angle: 0, stops } }));
+    expect(v?.fill).toBeNull();
+    expect(v?.gradient?.type).toBe("axial");
+  });
+});
+
+describe("backgroundShape", () => {
+  it("is a solid rectangle, a shading, or nothing", () => {
+    const solid = backgroundShape("#ffffff", undefined, 100, 50);
+    expect(solid?.fill).toEqual({ r: 1, g: 1, b: 1, a: 1 });
+    expect(pathBounds(solid?.path ?? [])).toEqual([0, 0, 100, 50]);
+    const gradient = backgroundShape("#ffffff", { type: "radial", angle: 0, stops: [{ offset: 0, color: "#000" }, { offset: 1, color: "#fff" }] }, 100, 50);
+    expect(gradient?.fill).toBeNull();
+    expect(gradient?.gradient?.type).toBe("radial");
+    expect(backgroundShape("transparent", undefined, 100, 50)).toBeNull();
   });
 });

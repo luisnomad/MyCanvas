@@ -3,13 +3,16 @@ import Konva from "konva";
 import {
   type PDFFont,
   type PDFImage,
-  type PDFName,
-  type PDFOperator,
   type PDFPage,
   LineCapStyle,
   LineJoinStyle,
   PDFContentStream,
+  PDFDict,
   PDFDocument,
+  PDFName,
+  PDFOperator,
+  PDFOperatorNames,
+  type PDFRef,
   appendBezierCurve,
   clip,
   closePath,
@@ -32,14 +35,14 @@ import {
   setStrokingRgbColor,
   stroke,
 } from "pdf-lib";
-import { type ImageAdjustments, type Layer, type TextLayer, parseFontStyle } from "@mycanvas/shared";
+import { type ImageAdjustments, type Layer, type PageContent, type TextLayer, parseFontStyle } from "@mycanvas/shared";
 import { useEditorStore } from "../store/editorStore";
 import { TEXT_MAIN_NAME } from "./behind-text";
 import { getContentLayer, getLayerNode } from "./canvas-bridge";
 import { ensureFontsLoaded, isGoogleFont } from "./fonts";
 import { cssFilterFor, hasAdjustments } from "./image-filters";
 import { type PictureKind, type PicturePlacement, type Rect, flipMatrix, framePlacement, fullPictureRect, imagePlacement, jpegExifOrientation, pictureMatrix, sniffPicture } from "./pdf-picture";
-import { type PathCommand, type VectorShape, pathBounds, pdfLayerMatrix, shadowVisible, vectorShapeForLayer } from "./pdf-vector";
+import { type PathCommand, type Rgba, type ShadingSpec, type VectorShape, backgroundShape, pathBounds, pdfLayerMatrix, shadowVisible, vectorShapeForLayer } from "./pdf-vector";
 import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
 
 /**
@@ -49,9 +52,10 @@ import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
  * - plain text layers (no effect, not curved) are drawn as PDF text with
  *   the font embedded (subset), at the exact baselines Konva uses — crisp,
  *   searchable and copyable;
- * - rects, shapes and lines with solid paint (no gradient or shadow) are
- *   drawn as PDF paths from the design model (see pdf-vector.ts), with the
- *   geometry the editor draws;
+ * - rects, shapes and lines without a shadow are drawn as PDF paths from
+ *   the design model (see pdf-vector.ts), with the geometry the editor
+ *   draws; gradients are native axial/radial shadings, as is a gradient
+ *   page background (a solid one is a rectangle);
  * - photos and filled frames embed the original file untouched, at full
  *   resolution, clipped to the crop or the frame shape (see pdf-picture.ts);
  *   a filtered photo embeds its filtered pixels at the photo's own size;
@@ -472,10 +476,73 @@ function alphaState(pdf: PDFDocument, page: PDFPage, fillAlpha: number, strokeAl
   return page.node.newExtGState("GS", ref);
 }
 
-/** Path construction plus paint for a vector shape (alphas already in the graphics state). */
-function shapeOperators(shape: VectorShape): PDFOperator[] {
-  const ops: PDFOperator[] = pathOperators(shape.path);
+/** A PDF shading (axial or radial, DeviceRGB) with its stop function, registered in the document. */
+function shadingRef(pdf: PDFDocument, spec: ShadingSpec): PDFRef {
+  const rgb3 = (color: Rgba) => [color.r, color.g, color.b];
+  const first = spec.stops[0] ?? { offset: 0, color: { r: 0, g: 0, b: 0, a: 1 } };
+  const last = spec.stops[spec.stops.length - 1] ?? first;
+  // The function must cover 0…1: hold the end colors outside the stops.
+  const stops = [...(first.offset > 0 ? [{ offset: 0, color: first.color }] : []), ...spec.stops, ...(last.offset < 1 ? [{ offset: 1, color: last.color }] : [])];
+  const segment = (from: Rgba, to: Rgba) => pdf.context.register(pdf.context.obj({ FunctionType: 2, Domain: [0, 1], C0: rgb3(from), C1: rgb3(to), N: 1 }));
+  let fn: PDFRef;
+  if (stops.length === 2) {
+    fn = segment(stops[0]?.color ?? first.color, stops[1]?.color ?? last.color);
+  } else {
+    const functions: PDFRef[] = [];
+    const bounds: number[] = [];
+    const encode: number[] = [];
+    for (let i = 1; i < stops.length; i += 1) {
+      functions.push(segment(stops[i - 1]?.color ?? first.color, stops[i]?.color ?? last.color));
+      if (i < stops.length - 1) {
+        // Hard stops (equal offsets) need strictly increasing bounds.
+        const previous = bounds[bounds.length - 1] ?? 0;
+        bounds.push(Math.max(stops[i]?.offset ?? 0, previous + 1e-4));
+      }
+      encode.push(0, 1);
+    }
+    fn = pdf.context.register(pdf.context.obj({ FunctionType: 3, Domain: [0, 1], Functions: functions, Bounds: bounds, Encode: encode }));
+  }
+  return pdf.context.register(pdf.context.obj({
+    ShadingType: spec.type === "axial" ? 2 : 3,
+    ColorSpace: "DeviceRGB",
+    Coords: spec.coords,
+    Function: fn,
+    // Canvas pads both ends with the end colors.
+    Extend: [true, true],
+  }));
+}
+
+let shadingCount = 0;
+
+/** Adds `ref` to the /Shading resources of `resources` under a fresh name. */
+function shadingName(pdf: PDFDocument, resources: PDFDict, ref: PDFRef): PDFName {
+  const key = PDFName.of("Shading");
+  const existing = resources.lookup(key);
+  const dict: PDFDict = existing instanceof PDFDict ? existing : pdf.context.obj({});
+  if (dict !== existing) {
+    resources.set(key, dict);
+  }
+  shadingCount += 1;
+  const name = PDFName.of(`Sh${String(shadingCount)}`);
+  dict.set(name, ref);
+  return name;
+}
+
+/**
+ * Path construction plus paint for a vector shape (alphas already in the
+ * graphics state). A gradient fill clips to the path and paints the
+ * shading (`shading` names it in the current resources).
+ */
+function shapeOperators(shape: VectorShape, shading: PDFName | null): PDFOperator[] {
+  const ops: PDFOperator[] = [];
   const { fill: fillColor, stroke: strokeStyle } = shape;
+  if (shading) {
+    ops.push(pushGraphicsState(), ...pathOperators(shape.path), clip(), endPath(), PDFOperator.of(PDFOperatorNames.ShadingFill, [shading]), popGraphicsState());
+    if (!strokeStyle) {
+      return ops;
+    }
+  }
+  ops.push(...pathOperators(shape.path));
   if (fillColor) {
     ops.push(setFillingRgbColor(fillColor.r, fillColor.g, fillColor.b));
   }
@@ -499,12 +566,13 @@ function shapeOperators(shape: VectorShape): PDFOperator[] {
  * matching Konva's buffered draw.
  */
 function drawVector(pdf: PDFDocument, page: PDFPage, shape: VectorShape, designHeight: number) {
-  if ((!shape.fill && !shape.stroke) || shape.opacity <= 0 || shape.path.length === 0) {
+  if ((!shape.fill && !shape.gradient && !shape.stroke) || shape.opacity <= 0 || shape.path.length === 0) {
     return;
   }
   const [a, b, c, d, e, f] = pdfLayerMatrix(shape.matrix, designHeight, POINTS_PER_PX);
-  const fillAlpha = shape.fill?.a ?? 1;
+  const fillAlpha = shape.gradient ? shape.gradient.alpha : (shape.fill?.a ?? 1);
   const strokeAlpha = shape.stroke?.color.a ?? 1;
+  const shading = shape.gradient ? shadingRef(pdf, shape.gradient) : null;
   const ops: PDFOperator[] = [pushGraphicsState(), concatTransformationMatrix(a, b, c, d, e, f)];
   if (shape.group) {
     // Inner alphas live in the group; the group is composited at layer opacity.
@@ -515,7 +583,10 @@ function drawVector(pdf: PDFDocument, page: PDFPage, shape: VectorShape, designH
       resources.ExtGState = { GS0: ref };
       inner.push(setGraphicsState("GS0"));
     }
-    inner.push(...shapeOperators(shape));
+    if (shading) {
+      resources.Shading = { Sh0: shading };
+    }
+    inner.push(...shapeOperators(shape, shading ? PDFName.of("Sh0") : null));
     // Generous box: strokes, round caps and miters stay inside it.
     const pad = (shape.stroke?.width ?? 0) * 6 + 2;
     const dict = pdf.context.obj({
@@ -537,7 +608,7 @@ function drawVector(pdf: PDFDocument, page: PDFPage, shape: VectorShape, designH
     if (state) {
       ops.push(setGraphicsState(state));
     }
-    ops.push(...shapeOperators(shape));
+    ops.push(...shapeOperators(shape, shading ? shadingName(pdf, page.node.normalizedEntries().Resources, shading) : null));
   }
   ops.push(popGraphicsState());
   page.pushOperators(...ops);
@@ -577,7 +648,13 @@ function rasterize(contentLayer: Konva.Layer, slice: Extract<Slice, { kind: "ras
 }
 
 /** Builds the open page's slices in z-order. */
-async function sliceOpenPage(layers: Layer[], fonts: FontSource, contentLayer: Konva.Layer): Promise<{ slices: Slice[]; fontFor: Map<TextLayer, PDFFont> }> {
+async function sliceOpenPage(
+  page: Pick<PageContent, "background" | "backgroundGradient" | "layers">,
+  size: { width: number; height: number },
+  fonts: FontSource,
+  contentLayer: Konva.Layer,
+): Promise<{ slices: Slice[]; fontFor: Map<TextLayer, PDFFont> }> {
+  const layers = page.layers;
   const fontFor = new Map<TextLayer, PDFFont>();
   const vector = new Map<Konva.Node, { layer: TextLayer; node: Konva.Text }>();
   for (const layer of layers) {
@@ -638,6 +715,14 @@ async function sliceOpenPage(layers: Layer[], fonts: FontSource, contentLayer: K
   const slices: Slice[] = [];
   let raster: Extract<Slice, { kind: "raster" }> | null = null;
   for (const child of contentLayer.getChildren()) {
+    if (child.name() === "canvas-background") {
+      const background = backgroundShape(page.background, page.backgroundGradient, size.width, size.height);
+      if (background) {
+        raster = null;
+        slices.push({ kind: "vector", shape: background });
+        continue;
+      }
+    }
     const text = vector.get(child);
     if (text) {
       raster = null;
@@ -700,7 +785,7 @@ export async function exportDesignPdf(options: PdfExportOptions): Promise<Uint8A
         throw new Error("Canvas is not ready");
       }
       const page = pdf.addPage([design.width * k, design.height * k]);
-      const { slices, fontFor } = await sliceOpenPage(live.layers, fonts, contentLayer);
+      const { slices, fontFor } = await sliceOpenPage(live, { width: design.width, height: design.height }, fonts, contentLayer);
       for (const slice of slices) {
         if (slice.kind === "text") {
           const font = fontFor.get(slice.layer);
