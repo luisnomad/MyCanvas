@@ -12,6 +12,7 @@ import { RendererUnavailable, runHeadless, setKeepWarm } from "../renderer";
 import { MAX_SOURCE_BYTES, SOURCE_TYPES, isSafeSourceFile, listSources, readSource, saveSource } from "../sources";
 import { type Workspace, workspaceFor, writeJsonFile } from "../storage";
 import { storedZip } from "../zip";
+import { IMAGE_SIZE_HELP, imageScale } from "./image-scale";
 
 /*
  * What needs the headless renderer (docs/AGENT_API.md): renders, layout
@@ -46,7 +47,7 @@ function pageParam(c: Context): number | null {
   return Number.isInteger(page) && page >= 0 ? page : null;
 }
 
-function scaleParam(c: Context, fallback: number, max = 3): number | null {
+function scaleParam(c: Context, fallback: number, max: number): number | null {
   const raw = c.req.query("scale");
   const scale = raw === undefined ? fallback : Number(raw);
   return Number.isFinite(scale) && scale >= 0.1 && scale <= max ? scale : null;
@@ -54,6 +55,10 @@ function scaleParam(c: Context, fallback: number, max = 3): number | null {
 
 /** PDFs go up to 4x: 3.125x is 300 dpi for print (designs are 96 px per inch). */
 const PDF_MAX_SCALE = 4;
+
+function imageScaleParam(c: Context, design: { width: number; height: number }): number | null {
+  return imageScale({ scale: c.req.query("scale"), width: c.req.query("width") }, design.width, design.height);
+}
 
 function safeFileName(name: string): string {
   return name.replace(/[^\p{L}\p{N} ._-]+/gu, "").trim().slice(0, 80) || "design";
@@ -130,14 +135,15 @@ export function registerRenderRoutes(app: Hono<AppEnv>): void {
   app.get(`${BASE}/designs/:id/render`, async (c) => {
     const id = c.req.param("id");
     const page = pageParam(c);
-    const scale = scaleParam(c, 1);
     const format = (c.req.query("format") ?? "png").toLowerCase();
     const quality = Number(c.req.query("quality") ?? "0.9");
-    if (page === null || scale === null || !["png", "jpg", "jpeg"].includes(format) || !(quality > 0 && quality <= 1)) {
-      return c.json({ error: "Use page=0…, scale=0.1–3, format=png|jpg, quality=0–1" }, 400);
-    }
-    if (!await readDesign(c.get("ws"), id)) {
+    const design = await readDesign(c.get("ws"), id);
+    if (!design) {
       return c.json({ error: "Not found" }, 404);
+    }
+    const scale = imageScaleParam(c, design);
+    if (page === null || scale === null || !["png", "jpg", "jpeg"].includes(format) || !(quality > 0 && quality <= 1)) {
+      return c.json({ error: `${IMAGE_SIZE_HELP}; page=0…, format=png|jpg, quality=0–1` }, 400);
     }
     try {
       const result = await runHeadless("renderPage", id, page, { format: format === "png" ? "png" : "jpeg", scale, quality });
@@ -193,14 +199,14 @@ export function registerRenderRoutes(app: Hono<AppEnv>): void {
   /** Every page as PNG/JPEG in one zip. */
   app.get(`${BASE}/designs/:id/export.zip`, async (c) => {
     const id = c.req.param("id");
-    const scale = scaleParam(c, 1);
     const format = (c.req.query("format") ?? "png").toLowerCase();
     const design = await readDesign(c.get("ws"), id);
     if (!design) {
       return c.json({ error: "Not found" }, 404);
     }
+    const scale = imageScaleParam(c, design);
     if (scale === null || !["png", "jpg", "jpeg"].includes(format)) {
-      return c.json({ error: "Use scale=0.1–3 and format=png|jpg" }, 400);
+      return c.json({ error: `${IMAGE_SIZE_HELP}; format=png|jpg` }, 400);
     }
     const ext = format === "png" ? "png" : "jpg";
     try {
