@@ -72,7 +72,7 @@ export function ExportDialog({ onClose }: ExportDialogProps) {
   const pageNumber = design.pages.findIndex((page) => page.id === activePageId) + 1;
   const baseName = design.name.trim() || "design";
   const outputSummary = format === "pdf"
-    ? `${String(pageCount)} ${pageCount === 1 ? "page" : "pages"} · plain text and shapes stay vector; images and effects at ${String(multiplier)}x`
+    ? `${String(pageCount)} ${pageCount === 1 ? "page" : "pages"} · text, shapes and gradients stay vector, photos keep their original file; shadows and glows at ${String(multiplier)}x`
     : `Output: ${String(outWidth)} × ${String(outHeight)} px${capped ? ` (capped at ${String(MAX_EXPORT_SIDE)} px per side)` : ""}${estimate ? ` · ${estimate}` : ""}${pageCount > 1 ? ` · page ${String(pageNumber)} of ${String(pageCount)}` : ""}`;
 
   const download = (href: string, filename: string) => {
