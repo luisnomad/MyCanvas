@@ -241,6 +241,10 @@ select:focus {
   width: 64px;
 }
 
+.field input[type="number"].export-width {
+  width: 120px;
+}
+
 input[type="range"] {
   width: 100%;
   accent-color: var(--accent);

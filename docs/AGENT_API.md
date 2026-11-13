@@ -306,7 +306,7 @@ type Position = "top" | "bottom" | number | { above: string } | { below: string 
 |---|---|---|
 | GET | `/designs/:id/render?page=0&format=png\|jpg&scale=1&quality=0.9` | page image bytes |
 | GET | `/designs/:id/layout?page=0` | each layer's rendered box (text bounds, overflow checks) |
-| GET | `/designs/:id/export.pdf?scale=2` | every page, same PDF export as the editor. Plain text stays real text; text with effects, curves, images and shapes are images at `scale` (0.1–4; 2 ≈ 192 dpi, **3.125 = 300 dpi for print**) |
+| GET | `/designs/:id/export.pdf?scale=2` | every page, same PDF export as the editor. Vector: text (also curved and with outline, background, echo or glitch effects) stays real, searchable text; shapes, lines, curves and gradients are vector paths; photos embed their original file. Still pictures, at `scale` (0.1–4; 2 ≈ 192 dpi, **3.125 = 300 dpi for print**): soft shadows and glows (just the effect, under the vector layer), filtered photos, and anything else PDF can't draw exactly |
 | GET | `/designs/:id/export.zip?format=png&scale=2` | every page as images |
 
 `scale` is 0.1–3 (PDF: up to 4). Measured on the Mac (1200×628 design): first render
