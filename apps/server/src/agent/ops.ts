@@ -7,6 +7,7 @@ import {
   type ImageLayer,
   type Layer,
   type TextEffect,
+  SHAPE_NAMES,
   defaultShadow,
   defaultStroke,
   defaultTextEffect,
@@ -540,6 +541,16 @@ export function applyOps(source: Design, ops: unknown, ctx: OpsContext): OpsResu
           layer = applyFields(newLayer(layerType, id, design), fields);
           if (layer.type === "frame" && fields.content) {
             layer.content = checkFrameContent(fields.content, `${where}.layer.content`, layer, ctx);
+          }
+          // The defaults are a circle; a shape of another kind is named after it.
+          if (layer.type === "shape" && typeof input.name !== "string") {
+            layer.name = SHAPE_NAMES[layer.shape];
+          }
+          // A line given only its points is drawn where they say on the page,
+          // not offset from the default spot in the middle.
+          if (layer.type === "line" && input.points !== undefined) {
+            layer.x = typeof input.x === "number" ? input.x : 0;
+            layer.y = typeof input.y === "number" ? input.y : 0;
           }
           if (layer.type === "text" && typeof input.name !== "string") {
             layer.name = (layer.text.split("\n")[0]?.slice(0, 40).trim() ?? "") === "" ? "Text" : (layer.text.split("\n")[0] ?? "").slice(0, 40).trim();

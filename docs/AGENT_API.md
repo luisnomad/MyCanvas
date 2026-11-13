@@ -297,6 +297,8 @@ type Position = "top" | "bottom" | number | { above: string } | { below: string 
   the line into a smooth curve (quadratic Bézier) pulled towards that point.
   `null` straightens it. In the editor, a round handle on the line's middle
   bends it.
+  A line added with `points` but no `x`/`y` gets `x: 0, y: 0`, so the points
+  are page coordinates. Shapes are named after their kind unless `name` is set.
 - For bulk work, `PUT /designs/:id` (whole design, `baseRevision` required)
   is also available, with the same locks.
 
