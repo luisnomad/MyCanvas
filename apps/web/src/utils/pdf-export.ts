@@ -35,6 +35,7 @@ import { TEXT_MAIN_NAME } from "./behind-text";
 import { getContentLayer, getLayerNode } from "./canvas-bridge";
 import { ensureFontsLoaded, isGoogleFont } from "./fonts";
 import { type VectorShape, pathBounds, pdfLayerMatrix, vectorShapeForLayer } from "./pdf-vector";
+import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
 
 /**
  * Multi-page PDF export with real text.
@@ -152,7 +153,9 @@ class FontSource {
           return null;
         }
         try {
-          return await this.pdf.embedFont(bytes, { subset: true });
+          // Even glyph lengths: fontkit's subset writes a short loca that
+          // truncates odd offsets and loses glyphs (see ttf-even-glyphs.ts).
+          return await this.pdf.embedFont(padTrueTypeGlyphs(new Uint8Array(bytes)), { subset: true });
         } catch {
           return null;
         }
