@@ -271,6 +271,25 @@ describe("designs and ops", () => {
     expect(((await bad.json()) as { error: string }).error).toContain("control");
   });
 
+  it("names shapes after their kind and places lines given only points on the page", async () => {
+    const design = await newDesign();
+    expect((await ops(design.id, [
+      { op: "addLayer", layer: { type: "shape", id: "hex", shape: "hexagon" } },
+      { op: "addLayer", layer: { type: "shape", id: "named", shape: "star", name: "Badge" } },
+      { op: "addLayer", layer: { type: "line", id: "rule", points: [110, 400, 330, 400] } },
+      { op: "addLayer", layer: { type: "line", id: "moved", x: 10, points: [0, 0, 50, 0] } },
+      { op: "addLayer", layer: { type: "line", id: "plain" } },
+    ])).status).toBe(200);
+    const layers = (await getDesign(design.id)).pages[0]?.layers ?? [];
+    const byId = (id: string) => layers.find((layer) => layer.id === id);
+    expect(byId("hex")).toMatchObject({ name: "Hexagon" });
+    expect(byId("named")).toMatchObject({ name: "Badge" });
+    expect(byId("rule")).toMatchObject({ x: 0, y: 0, points: [110, 400, 330, 400] });
+    expect(byId("moved")).toMatchObject({ x: 10, y: 0 });
+    // Without points, the default line still sits in the middle of the page.
+    expect(byId("plain")?.x).toBeGreaterThan(0);
+  });
+
   it("names groups through a layer field or the nameGroup op", async () => {
     const design = await newDesign();
     expect((await ops(design.id, [
