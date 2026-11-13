@@ -74,6 +74,11 @@ export interface ShareInfo {
   path: string;
   hasPin: boolean;
   createdAt: string;
+  /** When the link stops working, or null for never. */
+  expiresAt: string | null;
+  expired: boolean;
+  /** When a viewer last opened it (to the minute), or null. */
+  lastViewedAt: string | null;
 }
 
 export interface ShareState {
@@ -141,7 +146,7 @@ export const api = {
   /** Every locked design (lock badges in the project list). */
   getShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`),
   /** Creates or changes the link: `pin` null removes it; `newLink` throws the old one away. */
-  saveShare: (id: string, change: { pin?: string | null; newLink?: boolean }) =>
+  saveShare: (id: string, change: { pin?: string | null; newLink?: boolean; expiresInDays?: number | null }) =>
     request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, jsonInit("PUT", change)),
   stopShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, { method: "DELETE" }),
   listLocks: () => request<DesignLock[]>("/api/locks"),

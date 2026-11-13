@@ -9,10 +9,13 @@ import { eventStream, publish } from "./events";
 import { fontFaceCss, isSafeFontFile, listFonts, readFontFile } from "./fonts";
 import {
   type ShareRecord,
+  EXPIRY_DAYS,
   PIN_PATTERN,
   accessKeyMatches,
   deleteShare,
+  isExpired,
   notePinResult,
+  noteViewed,
   pinLockedOut,
   pinMatches,
   saveShare,
@@ -67,6 +70,10 @@ export function designAssets(design: Design): Set<string> {
 
 const noStore = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" };
 
+function expiredResponse(c: Context): Response {
+  return c.json({ error: "This link has expired", expired: true }, 410, noStore);
+}
+
 interface Viewer { record: ShareRecord; ws: Workspace; design: Design }
 
 /**
@@ -77,6 +84,9 @@ async function viewer(c: Context): Promise<Viewer | Response> {
   const record = await shareByToken(c.req.param("token") ?? "");
   if (!record) {
     return c.json({ error: "This link isn't shared any more" }, 404, noStore);
+  }
+  if (isExpired(record)) {
+    return expiredResponse(c);
   }
   const ws = await workspaceFor(record.email);
   const design = await readDesign(ws, record.designId);
@@ -140,8 +150,13 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
     if (pin !== undefined && pin !== null && (typeof pin !== "string" || !PIN_PATTERN.test(pin))) {
       return c.json({ error: "The PIN is 4 to 8 digits" }, 400);
     }
+    const days = body.expiresInDays;
+    if (days !== undefined && days !== null && !(EXPIRY_DAYS as readonly unknown[]).includes(days)) {
+      return c.json({ error: `expiresInDays must be ${EXPIRY_DAYS.join(", ")} or null` }, 400);
+    }
     const record = await saveShare(ws.email, id, {
       ...(pin === undefined ? {} : { pin }),
+      ...(days === undefined ? {} : { expiresInDays: days as number | null }),
       newLink: body.newLink === true,
     });
     publish(ws, { type: "share.changed", id });
@@ -162,6 +177,7 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
     if (found instanceof Response) {
       return found;
     }
+    void noteViewed(found.record.token).catch(() => undefined);
     return c.json({ design: withoutThumbnails(found.design) }, 200, noStore);
   });
 
@@ -169,6 +185,9 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
     const record = await shareByToken(c.req.param("token"));
     if (!record) {
       return c.json({ error: "This link isn't shared any more" }, 404, noStore);
+    }
+    if (isExpired(record)) {
+      return expiredResponse(c);
     }
     if (pinLockedOut(record.token)) {
       return c.json({ error: "Too many wrong PINs. Try again in a few minutes." }, 429, noStore);

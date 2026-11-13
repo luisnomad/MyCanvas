@@ -290,6 +290,14 @@ describe("designs and ops", () => {
     expect(byId("plain")?.x).toBeGreaterThan(0);
   });
 
+  it("reports the layout check with each batch (skipped when the renderer is off or check is false)", async () => {
+    const design = await newDesign();
+    const res = await ops(design.id, [{ op: "addLayer", layer: { type: "rect", id: "box" } }]);
+    expect(await res.json()).toMatchObject({ created: ["box"], layout: { checked: false } });
+    const skipped = await ops(design.id, [{ op: "updateLayer", id: "box", set: { x: 5 } }], { check: false });
+    expect(await skipped.json()).not.toHaveProperty("layout");
+  });
+
   it("names groups through a layer field or the nameGroup op", async () => {
     const design = await newDesign();
     expect((await ops(design.id, [

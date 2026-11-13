@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { type ShareState, api } from "../api";
+import { type ShareInfo, type ShareState, api } from "../api";
 
 /*
  * Share a read-only, live view of the design (e.g. with a customer): anyone
@@ -9,6 +9,36 @@ import { type ShareState, api } from "../api";
  */
 
 const PIN_PATTERN = /^[0-9]{4,8}$/;
+const EXPIRY_CHOICES: { label: string; days: number | null }[] = [
+  { label: "Never", days: null },
+  { label: "In 1 day", days: 1 },
+  { label: "In 7 days", days: 7 },
+  { label: "In 30 days", days: 30 },
+];
+
+function when(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+/** "5 minutes ago", "yesterday"… */
+function ago(iso: string, now = Date.now()): string {
+  const minutes = Math.round((now - Date.parse(iso)) / 60_000);
+  const format = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (minutes < 60) {
+    return format.format(-Math.max(0, minutes), "minute");
+  }
+  if (minutes < 60 * 24) {
+    return format.format(-Math.round(minutes / 60), "hour");
+  }
+  return format.format(-Math.round(minutes / (60 * 24)), "day");
+}
+
+function expiryText(share: ShareInfo): string {
+  if (!share.expiresAt) {
+    return "Never expires";
+  }
+  return share.expired ? `Expired on ${when(share.expiresAt)}` : `Expires ${when(share.expiresAt)}`;
+}
 
 export function ShareDialog({ designId, onClose }: { designId: string; onClose: () => void }) {
   const [state, setState] = useState<ShareState | null>(null);
@@ -17,6 +47,7 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
   const [pin, setPin] = useState("");
   const [editingPin, setEditingPin] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [expiresInDays, setExpiresInDays] = useState<number | null>(null);
 
   useEffect(() => {
     api.getShare(designId).then(setState).catch(() => {
@@ -82,6 +113,19 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
               <span>PIN (optional)</span>
               {pinField}
             </label>
+            <label className="field field-wide">
+              <span>Link expires</span>
+              <select
+                value={String(expiresInDays)}
+                onChange={(e) => {
+                  setExpiresInDays(e.target.value === "null" ? null : Number(e.target.value));
+                }}
+              >
+                {EXPIRY_CHOICES.map((choice) => (
+                  <option key={choice.label} value={String(choice.days)}>{choice.label}</option>
+                ))}
+              </select>
+            </label>
             <div className="dialog-actions">
               <button type="button" className="secondary" onClick={onClose}>
                 Cancel
@@ -91,7 +135,7 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
                 className="primary"
                 disabled={busy || (pin !== "" && !pinValid)}
                 onClick={() => {
-                  void run(() => api.saveShare(designId, pin ? { pin } : {}));
+                  void run(() => api.saveShare(designId, { ...(pin ? { pin } : {}), expiresInDays }));
                 }}
               >
                 {busy ? "Creating…" : "Create link"}
@@ -159,6 +203,27 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
             {share.hasPin && !editingPin && (
               <p className="muted">Send the PIN separately from the link. Changing it signs out everyone who entered the old one.</p>
             )}
+
+            <div className={share.expired ? "share-pin-row share-expired" : "share-pin-row"}>
+              <span>{expiryText(share)}</span>
+              <select
+                aria-label="Change when the link expires"
+                value=""
+                disabled={busy}
+                onChange={(e) => {
+                  const days = e.target.value === "null" ? null : Number(e.target.value);
+                  void run(() => api.saveShare(designId, { expiresInDays: days }));
+                }}
+              >
+                <option value="" disabled>{share.expired ? "Extend…" : "Change…"}</option>
+                {EXPIRY_CHOICES.map((choice) => (
+                  <option key={choice.label} value={String(choice.days)}>{choice.days === null ? "Never expire" : `Expire ${choice.label.toLowerCase()}`}</option>
+                ))}
+              </select>
+            </div>
+            <p className="muted share-viewed">
+              {share.lastViewedAt ? `Last viewed ${ago(share.lastViewedAt)}` : "Not viewed yet"}
+            </p>
 
             <div className="dialog-actions share-actions">
               <button

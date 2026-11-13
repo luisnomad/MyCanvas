@@ -25,6 +25,7 @@ import { registerFontRoutes } from "../font-routes";
 import { imageSize } from "../image-size";
 import { type DesignLock, acquireLock, getLock, releaseLock, serialized, wasTakenFromAgent } from "../locks";
 import { isSafeId, newId, workspaceFor } from "../storage";
+import { checkLayout } from "./layout-check";
 import { OpError, applyOps, assetsIn } from "./ops";
 import { registerRenderRoutes, scheduleThumbnails } from "./render-routes";
 
@@ -232,7 +233,7 @@ export function registerAgentRoutes(app: Hono<AppEnv>, helpers: AgentHelpers): v
   /** A batch of page and layer edits, applied atomically (see ops.ts). */
   app.post(`${AGENT_BASE}/designs/:id/ops`, async (c) => {
     const ws = c.get("ws");
-    const body = await c.req.json<{ ops?: unknown; baseRevision?: unknown }>().catch(() => null);
+    const body = await c.req.json<{ ops?: unknown; baseRevision?: unknown; check?: unknown }>().catch(() => null);
     if (!body) {
       return c.json({ error: "Body must be JSON: { ops: [...] }" }, 400);
     }
@@ -251,7 +252,8 @@ export function registerAgentRoutes(app: Hono<AppEnv>, helpers: AgentHelpers): v
       }
     }
     let created: string[] = [];
-    return agentWrite(c, (design) => {
+    let stored: Design | null = null;
+    const written = await agentWrite(c, (design) => {
       try {
         const result = applyOps(design, body.ops, { assetSize: (asset) => sizes.get(asset) ?? null, newId });
         created = result.created;
@@ -262,7 +264,24 @@ export function registerAgentRoutes(app: Hono<AppEnv>, helpers: AgentHelpers): v
         }
         throw error;
       }
-    }, (stored) => ({ revision: stored.revision ?? 0, created }), body.baseRevision);
+    }, (saved) => {
+      stored = saved;
+      return { revision: saved.revision ?? 0, created };
+    }, body.baseRevision);
+    // Tell Claude at once when what it just added or changed landed off the
+    // page or lacks its font ("check": false skips this).
+    const saved = stored as Design | null;
+    if (!written.ok || !saved || body.check === false) {
+      return written;
+    }
+    const touched = new Set(created);
+    for (const op of Array.isArray(body.ops) ? body.ops as Record<string, unknown>[] : []) {
+      if ((op.op === "updateLayer" || op.op === "moveLayer") && typeof op.id === "string") {
+        touched.add(op.id);
+      }
+    }
+    const result = (await written.json()) as Record<string, unknown>;
+    return c.json({ ...result, layout: touched.size > 0 ? await checkLayout(saved, touched) : { checked: true, warnings: [] } });
   });
 
   app.get(`${AGENT_BASE}/designs/:id/lock`, async (c) => c.json(await getLock(c.get("ws"), c.req.param("id"))));

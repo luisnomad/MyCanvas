@@ -250,8 +250,14 @@ Deleting designs is **not** in the agent API in v1 (Luis deletes by hand).
 `POST /designs/:id/ops` with `{ baseRevision?, ops: Op[] }`. The batch is
 applied **atomically**: all ops or none, one revision, one `design.updated`
 event (so Luis sees one clean change, not twenty flickers). Returns
-`{ revision, created: string[] }`: the ids of the layers and pages added, in
-op order.
+`{ revision, created: string[], layout }`: the ids of the layers and pages
+added, in op order, and a layout check of what the batch added or changed:
+`layout: { checked: true, warnings: [...] }`, each warning with `page`,
+`layer`, `problem` (`off_page`, `partly_off_page`, `missing_font`), a
+`message` and the layer's drawn `box` (it can differ from its x/y, e.g.
+curved text). A partly-off layer may be a deliberate bleed. When the renderer
+is unavailable or slow: `{ checked: false, reason }` (the write still
+happened). `"check": false` in the body skips it (bulk batches).
 
 ```ts
 type PageRef = number | string;          // 0-based index or page id; default 0
