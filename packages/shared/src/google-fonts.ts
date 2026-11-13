@@ -15,6 +15,7 @@ export const GOOGLE_FONTS: GoogleFont[] = [
   { family: "Lato", category: "sans-serif" },
   { family: "Poppins", category: "sans-serif" },
   { family: "Inter", category: "sans-serif" },
+  { family: "Outfit", category: "sans-serif" },
   { family: "Oswald", category: "sans-serif" },
   { family: "Raleway", category: "sans-serif" },
   { family: "Nunito", category: "sans-serif" },

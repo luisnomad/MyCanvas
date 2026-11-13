@@ -179,7 +179,11 @@ function shift(layers: Layer[], dx: number, dy: number): Layer[] {
   return layers.map((layer) => {
     if (layer.type === "line") {
       const [x1, y1, x2, y2] = layer.points;
-      return { ...layer, points: [x1 + dx, y1 + dy, x2 + dx, y2 + dy] };
+      return {
+        ...layer,
+        points: [x1 + dx, y1 + dy, x2 + dx, y2 + dy],
+        ...(layer.control ? { control: [layer.control[0] + dx, layer.control[1] + dy] as [number, number] } : {}),
+      };
     }
     return { ...layer, x: layer.x + dx, y: layer.y + dy };
   });

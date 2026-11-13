@@ -3,7 +3,9 @@ import { Brand } from "../components/Brand";
 import { CanvasStage } from "../components/CanvasStage";
 import { ContextBar } from "../components/ContextBar";
 import { ContextMenu } from "../components/ContextMenu";
+import { AgentEditingBanner, LeaveLockedDialog, LockStatus } from "../components/DesignLock";
 import { ExportDialog } from "../components/ExportDialog";
+import { ShareDialog } from "../components/ShareDialog";
 import { Inspector } from "../components/Inspector";
 import { LayersPanel } from "../components/LayersPanel";
 import { LeftToolbar } from "../components/LeftToolbar";
@@ -20,6 +22,8 @@ import { useViewSettings } from "../store/viewSettings";
 import { api } from "../api";
 import { folderViewHash } from "../utils/folders";
 import { makeDesignThumbnail } from "../utils/canvas-bridge";
+import { leaveTo, setLeaveGuard } from "../utils/leave-guard";
+import { onLive } from "../utils/live";
 
 export function Editor({ designId }: { designId: string }) {
   const design = useEditorStore((state) => state.design);
@@ -27,10 +31,15 @@ export function Editor({ designId }: { designId: string }) {
   const saveStatus = useEditorStore((state) => state.saveStatus);
   const setName = useEditorStore((state) => state.setName);
   const toast = useEditorStore((state) => state.toast);
+  const lockHolder = useEditorStore((state) => state.lock?.holder ?? null);
+  /** Claude holds the lock: the editor only shows its changes. */
+  const viewOnly = lockHolder === "agent";
+  const [leaveTarget, setLeaveTarget] = useState<string | null>(null);
 
   const [fitScale, setFitScale] = useState(1);
   const [zoom, setZoom] = useState<number | null>(null);
   const [showExport, setShowExport] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const pageCount = useEditorStore((state) => state.design?.pages.length ?? 0);
   const [stripOpen, setStripOpen] = useState(false);
@@ -75,6 +84,74 @@ export function Editor({ designId }: { designId: string }) {
     };
   }, [designId, loadDesign, unload]);
 
+  // Live updates: changes saved elsewhere (Claude, another tab) and lock
+  // changes appear without reloading.
+  useEffect(() => {
+    return onLive((event) => {
+      const state = useEditorStore.getState();
+      const open = state.design;
+      if (event.type === "assets.changed") {
+        state.bumpAssetsVersion();
+        return;
+      }
+      if (event.type === "reconnected") {
+        // Catch up on anything missed while disconnected.
+        void api.getLock(designId).then((lock) => { useEditorStore.getState().setLock(lock); }).catch(() => undefined);
+        if (open && state.saveStatus === "saved") {
+          void state.syncFromServer();
+        }
+        return;
+      }
+      if (!("id" in event) || event.id !== designId) {
+        return;
+      }
+      if (event.type === "lock.changed") {
+        const before = state.lock;
+        state.setLock(event.lock);
+        if (before?.holder === "human" && event.lock === null) {
+          state.showToast("The design was unlocked at your request.");
+        }
+        return;
+      }
+      if (event.type === "design.updated" && open) {
+        if (event.revision <= (open.revision ?? 0)) {
+          return; // This tab's own save, or already shown.
+        }
+        // Unsaved edits of ours: their save will notice the newer version
+        // (409) and bring it in, unless Claude holds the lock, in which case
+        // they can't be saved at all.
+        if (state.saveStatus === "saved" || state.lock?.holder === "agent") {
+          void state.syncFromServer(state.unsavedEdits ? `${state.lock?.label ?? "Claude"} changed the design, so your unsaved change was dropped.` : undefined);
+        }
+      }
+    });
+  }, [designId]);
+
+  // Leaving while the design is still locked to you: ask first (in-app),
+  // or let the browser ask (closing or reloading the tab).
+  useEffect(() => {
+    const ownHash = `#/edit/${designId}`;
+    setLeaveGuard((target) => {
+      if (target === ownHash || useEditorStore.getState().lock?.holder !== "human") {
+        return false;
+      }
+      setLeaveTarget(target === "" ? "#/" : target);
+      return true;
+    });
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (useEditorStore.getState().lock?.holder === "human") {
+        e.preventDefault();
+        // Older browsers need returnValue set to show the prompt.
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      setLeaveGuard(null);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [designId]);
+
   const handleFitScale = useCallback((fit: number) => {
     setFitScale((prev) => (Math.abs(prev - fit) < 0.001 ? prev : fit));
   }, []);
@@ -99,6 +176,13 @@ export function Editor({ designId }: { designId: string }) {
       // Enter/Escape); keep Delete/arrows/undo inert while panning content.
       if (state.editingFrameId) {
         return;
+      }
+      // Claude is editing: only viewing shortcuts (pages, rulers, grid, help).
+      if (state.lock?.holder === "agent") {
+        const viewing = !mod && (e.key === "PageUp" || e.key === "PageDown" || e.key === "?" || e.key === "'" || (e.shiftKey && e.key.toLowerCase() === "r"));
+        if (!viewing) {
+          return;
+        }
       }
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -240,11 +324,11 @@ export function Editor({ designId }: { designId: string }) {
     const onBeforeUnload = () => {
       const state = useEditorStore.getState();
       const current = state.design;
-      if (!current || state.saveStatus === "saved") {
+      if (!current || state.saveStatus === "saved" || state.lock?.holder === "agent") {
         return;
       }
       const thumbnail = makeDesignThumbnail();
-      const payload = thumbnail ? { ...current, thumbnail } : current;
+      const payload = { ...current, ...(thumbnail ? { thumbnail } : {}), baseRevision: current.revision ?? 0 };
       void fetch(`/api/designs/${encodeURIComponent(current.id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -318,6 +402,7 @@ export function Editor({ designId }: { designId: string }) {
         <input
           className="design-name"
           value={design.name}
+          readOnly={viewOnly}
           onChange={(e) => {
             setName(e.target.value);
           }}
@@ -326,10 +411,23 @@ export function Editor({ designId }: { designId: string }) {
           <span className="save-dot" aria-hidden="true" />
           {saveLabel}
         </span>
+        <LockStatus />
         <span className="top-bar-spacer" />
         <ThemeToggle />
-        <FormatMenu />
-        <SaveTemplateButton />
+        <div className="view-only-scope" inert={viewOnly}>
+          <FormatMenu />
+          <SaveTemplateButton />
+        </div>
+        <button
+          type="button"
+          className="secondary"
+          title="Share a read-only, live view (e.g. with a customer)"
+          onClick={() => {
+            setShowShare(true);
+          }}
+        >
+          Share
+        </button>
         <button
           type="button"
           className="primary"
@@ -341,14 +439,19 @@ export function Editor({ designId }: { designId: string }) {
         </button>
         <UserBadge />
       </header>
-      <div className="editor-main">
-        <LeftToolbar textPropertiesRequest={textPropertiesRequest} />
+      <div className={viewOnly ? "editor-main view-only" : "editor-main"}>
+        <div className="view-only-scope" inert={viewOnly}>
+          <LeftToolbar textPropertiesRequest={textPropertiesRequest} />
+        </div>
         <main className="editor-center">
-          <ContextBar onOpenTextProperties={() => { setTextPropertiesRequest((request) => request + 1); }} />
-          <div className="canvas-wrap">
-            <CanvasStage design={design} scale={effectiveScale} onFitScale={handleFitScale} />
+          <AgentEditingBanner />
+          <div className="view-only-scope" inert={viewOnly}>
+            <ContextBar onOpenTextProperties={() => { setTextPropertiesRequest((request) => request + 1); }} />
+            <div className="canvas-wrap">
+              <CanvasStage design={design} scale={effectiveScale} onFitScale={handleFitScale} />
+            </div>
+            {stripOpen && <PagesStrip />}
           </div>
-          {stripOpen && <PagesStrip />}
           <div className="editor-bottom">
             <button
               type="button"
@@ -389,11 +492,21 @@ export function Editor({ designId }: { designId: string }) {
             </button>
           </div>
         </main>
-        <aside className="editor-right">
-          <LayersPanel />
-          <Inspector />
-        </aside>
+        <div className="view-only-scope" inert={viewOnly}>
+          <aside className="editor-right">
+            <LayersPanel />
+            <Inspector />
+          </aside>
+        </div>
       </div>
+      {showShare && (
+        <ShareDialog
+          designId={design.id}
+          onClose={() => {
+            setShowShare(false);
+          }}
+        />
+      )}
       {showExport && (
         <ExportDialog
           onClose={() => {
@@ -409,6 +522,23 @@ export function Editor({ designId }: { designId: string }) {
         />
       )}
       <ContextMenu />
+      {leaveTarget !== null && (
+        <LeaveLockedDialog
+          onStay={() => { setLeaveTarget(null); }}
+          onKeepAndLeave={() => {
+            const target = leaveTarget;
+            setLeaveTarget(null);
+            leaveTo(target);
+          }}
+          onUnlockAndLeave={async () => {
+            const target = leaveTarget;
+            if (await useEditorStore.getState().unlock()) {
+              setLeaveTarget(null);
+              leaveTo(target);
+            }
+          }}
+        />
+      )}
       {toast && (
         <div className="toast" role="status">
           {toast}

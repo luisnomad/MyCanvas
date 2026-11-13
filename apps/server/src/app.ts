@@ -1,5 +1,5 @@
 import { serveStatic } from "@hono/node-server/serve-static";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
@@ -8,17 +8,12 @@ import path from "node:path";
 import {
   type AssetInfo,
   type Design,
-  type DesignPage,
   type DesignSummary,
-  type DocumentSource,
   type Folder,
-  type StoredDesign,
   type TemplateSummary,
-  ASPECT_RATIOS,
   cleanBlockDesign,
   isGeneratedAssetName,
   GOOGLE_FONTS,
-  normalizeDesign,
 } from "@mycanvas/shared";
 
 import { isOwner } from "./ai/network";
@@ -26,7 +21,29 @@ import { registerAiRoutes } from "./ai/routes";
 import { assetFolderIndex, forgetAsset, placeAssets, registerAssetFolderRoutes } from "./asset-folders";
 import { assetUsageIndex } from "./asset-usage";
 import { readAssetManifest, saveAsset } from "./assets-store";
+import { registerSourceFileRoute } from "./agent/render-routes";
+import { registerAgentRoutes } from "./agent/routes";
 import { type Identity, identify } from "./auth";
+import { registerShareRoutes } from "./share-routes";
+import { deleteShare } from "./shares";
+import {
+  type CreateDesignInput,
+  cleanFolderName,
+  cleanSource,
+  createDesign,
+  designFile,
+  duplicateDesign,
+  existingFolderId,
+  readDesign,
+  readFolders,
+  readStored,
+  templateFile,
+  toSummary,
+  writeDesign,
+} from "./designs";
+import { clientIdOf, eventStream, publish } from "./events";
+import { registerFontFiles, registerFontRoutes } from "./font-routes";
+import { dropLock, getLock, listLocks, releaseLock, serialized, takeOver, acquireLock } from "./locks";
 import { STARTER_TEMPLATES, findStarterTemplate } from "./starter-templates";
 import { listSystemFonts } from "./system-fonts";
 import {
@@ -54,102 +71,19 @@ interface FavoritesSettings {
   googleFontFavorites: string[];
 }
 
-/** Reads a design or template file in the current (multi-page) shape. */
-async function readStored(file: string): Promise<Design | null> {
-  const stored = await readJsonFile<StoredDesign>(file);
-  return stored ? normalizeDesign(stored) : null;
-}
-
-function designFile(ws: Workspace, id: string): string {
-  return path.join(ws.designsDir, `${id}.json`);
-}
-
-function toSummary(design: Design): DesignSummary {
-  return {
-    id: design.id,
-    name: design.name,
-    width: design.width,
-    height: design.height,
-    pageCount: design.pages.length,
-    thumbnail: design.thumbnail,
-    folderId: design.folderId,
-    kind: design.kind,
-    sourceFormat: design.source?.formatName,
-    createdAt: design.createdAt,
-    updatedAt: design.updatedAt,
-  };
-}
-
-function isPageLike(page: unknown): page is DesignPage {
-  const candidate = page as Partial<DesignPage> | null;
-  return typeof candidate?.id === "string" && typeof candidate.background === "string" && Array.isArray(candidate.layers);
-}
-
-function cleanSource(source: unknown): DocumentSource | undefined {
-  const candidate = source as Partial<DocumentSource> | null | undefined;
-  if (typeof candidate?.formatId !== "string" || typeof candidate.markdown !== "string") {
-    return undefined;
-  }
-  return {
-    formatId: candidate.formatId,
-    formatName: typeof candidate.formatName === "string" ? candidate.formatName : "",
-    markdown: candidate.markdown,
-    generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : new Date().toISOString(),
-    ...(typeof candidate.formatUpdatedAt === "string" ? { formatUpdatedAt: candidate.formatUpdatedAt } : {}),
-  };
-}
-
-async function readFolders(ws: Workspace): Promise<Folder[]> {
-  return (await readJsonFile<Folder[]>(ws.foldersFile)) ?? [];
-}
-
-/** The folder id to file a design under, or undefined when it doesn't exist. */
-async function existingFolderId(ws: Workspace, folderId: unknown): Promise<string | undefined> {
-  if (typeof folderId !== "string") {
-    return undefined;
-  }
-  return (await readFolders(ws)).some((folder) => folder.id === folderId) ? folderId : undefined;
-}
-
-function cleanFolderName(name: unknown): string | null {
-  const trimmed = typeof name === "string" ? name.trim() : "";
-  return trimmed.length >= 1 && trimmed.length <= 80 ? trimmed : null;
-}
-
-async function readDesign(ws: Workspace, id: string): Promise<Design | null> {
-  if (!isSafeId(id)) {
-    return null;
-  }
-  return readStored(designFile(ws, id));
-}
-
-function templateFile(ws: Workspace, id: string): string {
-  return path.join(ws.templatesDir, `${id}.json`);
-}
-
-/** Built-in starters first, then the person's own saved templates. */
-async function readTemplate(ws: Workspace, id: string): Promise<Design | null> {
-  const starter = findStarterTemplate(id);
-  if (starter) {
-    return starter;
-  }
-  if (!isSafeId(id)) {
-    return null;
-  }
-  return readStored(templateFile(ws, id));
-}
-
 async function readFavorites(ws: Workspace): Promise<FavoritesSettings> {
   return (await readJsonFile<FavoritesSettings>(ws.settingsFile)) ?? { googleFontFavorites: [] };
 }
 
-export const app = new Hono<{ Variables: { ws: Workspace; identity: Identity } }>();
+export interface AppEnv { Variables: { ws: Workspace; identity: Identity } }
+
+export const app = new Hono<AppEnv>();
 
 app.use("/api/*", cors());
 
 // Every API call and image belongs to the caller's own workspace; nothing
 // is shared between people (see auth.ts for how the caller is identified).
-for (const pattern of ["/api/*", "/assets/*"]) {
+for (const pattern of ["/api/*", "/assets/*", "/fonts/*"]) {
   app.use(pattern, async (c, next) => {
     const result = await identify(c.req.raw.headers);
     if (!result.ok) {
@@ -196,66 +130,12 @@ app.get("/api/designs", async (c) => {
 
 app.post("/api/designs", async (c) => {
   const ws = c.get("ws");
-  const body = await c.req.json<{
-    name?: string;
-    aspectRatioId?: string;
-    width?: number;
-    height?: number;
-    background?: string;
-    templateId?: string;
-    folderId?: string;
-    /** Ready-made pages, e.g. a document generated from a format. */
-    pages?: DesignPage[];
-    source?: DocumentSource;
-    blocks?: unknown;
-  }>();
-  const folderId = await existingFolderId(ws, body.folderId);
-  if (body.templateId !== undefined) {
-    const source = await readTemplate(ws, body.templateId);
-    if (!source) {
-      return c.json({ error: "Template not found" }, 404);
-    }
-    const now = new Date().toISOString();
-    const trimmed = body.name?.trim();
-    const design: Design = {
-      ...structuredClone(source),
-      id: newId(),
-      name: trimmed === undefined || trimmed === "" ? source.name : trimmed,
-      folderId,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await writeJsonFile(designFile(ws, design.id), design);
-    return c.json(design, 201);
+  const result = await createDesign(ws, await c.req.json<CreateDesignInput>());
+  if (!result.ok) {
+    return c.json({ error: result.error }, result.status);
   }
-  const preset = ASPECT_RATIOS.find((r) => r.id === body.aspectRatioId) ?? ASPECT_RATIOS[0];
-  const width = body.width ?? preset?.width ?? 1280;
-  const height = body.height ?? preset?.height ?? 720;
-  if (width <= 0 || height <= 0 || width > 8192 || height > 8192) {
-    return c.json({ error: "Invalid canvas size" }, 400);
-  }
-  const pages = Array.isArray(body.pages) && body.pages.length > 0 ? body.pages : null;
-  if (pages && !pages.every(isPageLike)) {
-    return c.json({ error: "Invalid pages" }, 400);
-  }
-  const source = cleanSource(body.source);
-  const blocks = cleanBlockDesign(body.blocks);
-  const now = new Date().toISOString();
-  const trimmedName = body.name?.trim();
-  const design: Design = {
-    id: newId(),
-    name: trimmedName === undefined || trimmedName === "" ? "Untitled design" : trimmedName,
-    width,
-    height,
-    pages: pages ?? [{ id: newId(), background: body.background ?? "#ffffff", layers: [] }],
-    folderId,
-    ...(source ? { source } : {}),
-    ...(blocks ? { blocks } : {}),
-    createdAt: now,
-    updatedAt: now,
-  };
-  await writeJsonFile(designFile(ws, design.id), design);
-  return c.json(design, 201);
+  publish(ws, { type: "design.created", id: result.design.id, folderId: result.design.folderId, by: "human", clientId: clientIdOf(c) });
+  return c.json(result.design, 201);
 });
 
 app.get("/api/designs/:id", async (c) => {
@@ -268,60 +148,74 @@ app.get("/api/designs/:id", async (c) => {
 
 app.put("/api/designs/:id", async (c) => {
   const ws = c.get("ws");
-  const existing = await readDesign(ws, c.req.param("id"));
-  if (!existing) {
-    return c.json({ error: "Not found" }, 404);
-  }
-  const body = await c.req.json<Partial<Design>>();
-  // An editor save may change these fields only. Identity, folder and dates
-  // stay server-owned; an empty or missing page list would lose content, so
-  // the stored pages are kept in that case.
-  const design: Design = {
-    ...existing,
-    name: typeof body.name === "string" ? body.name : existing.name,
-    width: typeof body.width === "number" ? body.width : existing.width,
-    height: typeof body.height === "number" ? body.height : existing.height,
-    thumbnail: typeof body.thumbnail === "string" ? body.thumbnail : existing.thumbnail,
-    pages: Array.isArray(body.pages) && body.pages.length > 0 ? body.pages : existing.pages,
-    updatedAt: new Date().toISOString(),
-  };
-  // Optional fields: present in the body = set (null clears), absent = keep.
-  if ("kind" in body) {
-    if (body.kind === "format") {
-      design.kind = "format";
-    } else {
-      delete design.kind;
+  const id = c.req.param("id");
+  const body = await c.req.json<Partial<Design> & { baseRevision?: unknown }>();
+  return serialized(ws, id, async () => {
+    const existing = await readDesign(ws, id);
+    if (!existing) {
+      return c.json({ error: "Not found" }, 404);
     }
-  }
-  if ("formatAi" in body) {
-    const ai = body.formatAi as Partial<Record<"contentRules" | "illustrationStyle", unknown>> | undefined;
-    const text = (value: unknown) => (typeof value === "string" ? value.trim().slice(0, 4000) : "");
-    const contentRules = text(ai?.contentRules);
-    const illustrationStyle = text(ai?.illustrationStyle);
-    if (contentRules || illustrationStyle) {
-      design.formatAi = { contentRules, illustrationStyle };
-    } else {
-      delete design.formatAi;
+    // Claude is editing: the editor is view-only until Luis takes over.
+    const lock = await getLock(ws, id);
+    if (lock?.holder === "agent") {
+      return c.json({ error: "locked", lock }, 423);
     }
-  }
-  if ("source" in body) {
-    const source = cleanSource(body.source);
-    if (source) {
-      design.source = source;
-    } else {
-      delete design.source;
+    // Saved from an older copy than the stored one: refuse instead of
+    // overwriting newer changes. (Editors from before revisions send none.)
+    if (typeof body.baseRevision === "number" && body.baseRevision < (existing.revision ?? 0)) {
+      return c.json({ error: "stale", revision: existing.revision ?? 0 }, 409);
     }
-  }
-  if ("blocks" in body) {
-    const blocks = cleanBlockDesign(body.blocks);
-    if (blocks) {
-      design.blocks = blocks;
-    } else {
-      delete design.blocks;
+    // An editor save may change these fields only. Identity, folder and dates
+    // stay server-owned; an empty or missing page list would lose content, so
+    // the stored pages are kept in that case.
+    const design: Design = {
+      ...existing,
+      name: typeof body.name === "string" ? body.name : existing.name,
+      width: typeof body.width === "number" ? body.width : existing.width,
+      height: typeof body.height === "number" ? body.height : existing.height,
+      thumbnail: typeof body.thumbnail === "string" ? body.thumbnail : existing.thumbnail,
+      pages: Array.isArray(body.pages) && body.pages.length > 0 ? body.pages : existing.pages,
+      updatedAt: new Date().toISOString(),
+    };
+    // Optional fields: present in the body = set (null clears), absent = keep.
+    if ("kind" in body) {
+      if (body.kind === "format") {
+        design.kind = "format";
+      } else {
+        delete design.kind;
+      }
     }
-  }
-  await writeJsonFile(designFile(ws, design.id), design);
-  return c.json(design);
+    if ("formatAi" in body) {
+      const ai = body.formatAi as Partial<Record<"contentRules" | "illustrationStyle", unknown>> | undefined;
+      const text = (value: unknown) => (typeof value === "string" ? value.trim().slice(0, 4000) : "");
+      const contentRules = text(ai?.contentRules);
+      const illustrationStyle = text(ai?.illustrationStyle);
+      if (contentRules || illustrationStyle) {
+        design.formatAi = { contentRules, illustrationStyle };
+      } else {
+        delete design.formatAi;
+      }
+    }
+    if ("source" in body) {
+      const source = cleanSource(body.source);
+      if (source) {
+        design.source = source;
+      } else {
+        delete design.source;
+      }
+    }
+    if ("blocks" in body) {
+      const blocks = cleanBlockDesign(body.blocks);
+      if (blocks) {
+        design.blocks = blocks;
+      } else {
+        delete design.blocks;
+      }
+    }
+    const stored = await writeDesign(ws, design, existing);
+    publish(ws, { type: "design.updated", id, revision: stored.revision ?? 0, by: "human", clientId: clientIdOf(c) });
+    return c.json(stored);
+  });
 });
 
 app.delete("/api/designs/:id", async (c) => {
@@ -334,6 +228,9 @@ app.delete("/api/designs/:id", async (c) => {
   } catch {
     return c.json({ error: "Not found" }, 404);
   }
+  await dropLock(c.get("ws"), id);
+  await deleteShare(c.get("ws").email, id);
+  publish(c.get("ws"), { type: "design.deleted", id, by: "human", clientId: clientIdOf(c) });
   return c.json({ ok: true });
 });
 
@@ -343,15 +240,8 @@ app.post("/api/designs/:id/duplicate", async (c) => {
   if (!source) {
     return c.json({ error: "Not found" }, 404);
   }
-  const now = new Date().toISOString();
-  const copy: Design = {
-    ...source,
-    id: newId(),
-    name: `${source.name} (copy)`,
-    createdAt: now,
-    updatedAt: now,
-  };
-  await writeJsonFile(designFile(ws, copy.id), copy);
+  const copy = await duplicateDesign(ws, source);
+  publish(ws, { type: "design.created", id: copy.id, folderId: copy.folderId, by: "human", clientId: clientIdOf(c) });
   return c.json(copy, 201);
 });
 
@@ -368,9 +258,44 @@ app.post("/api/designs/:id/move", async (c) => {
   if (body.folderId && !folderId) {
     return c.json({ error: "Folder not found" }, 404);
   }
-  const moved: Design = { ...design, folderId };
-  await writeJsonFile(designFile(ws, design.id), moved);
+  const moved = await writeDesign(ws, { ...design, folderId }, design);
+  publish(ws, { type: "design.updated", id: moved.id, revision: moved.revision ?? 0, by: "human", clientId: clientIdOf(c) });
   return c.json(toSummary(moved));
+});
+
+/** Live updates for every open tab (see events.ts). */
+app.get("/api/events", (c) => eventStream(c, c.get("ws")));
+
+/** Every locked design, for the lock badges in the project list. */
+app.get("/api/locks", async (c) => c.json(await listLocks(c.get("ws"))));
+
+app.get("/api/designs/:id/lock", async (c) => c.json(await getLock(c.get("ws"), c.req.param("id"))));
+
+/** Luis's first edit locks the design to him (423 while Claude has it). */
+app.post("/api/designs/:id/lock", async (c) => {
+  const ws = c.get("ws");
+  const id = c.req.param("id");
+  if (!await readDesign(ws, id)) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  const result = await acquireLock(ws, id, "human", c.get("identity").email);
+  return result.ok ? c.json(result.lock) : c.json({ error: "locked", lock: result.lock }, 423);
+});
+
+/** Luis takes the design back from Claude, at once. */
+app.post("/api/designs/:id/lock/takeover", async (c) => {
+  const ws = c.get("ws");
+  const id = c.req.param("id");
+  if (!await readDesign(ws, id)) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  return c.json(await takeOver(ws, id, c.get("identity").email));
+});
+
+/** Unlock: releases Luis's own lock (Claude's is taken over, not released). */
+app.delete("/api/designs/:id/lock", async (c) => {
+  const released = await releaseLock(c.get("ws"), c.req.param("id"), "human");
+  return c.json({ ok: true, released });
 });
 
 app.get("/api/folders", async (c) => {
@@ -428,7 +353,7 @@ app.delete("/api/folders/:id", async (c) => {
     }
     const design = await readStored(path.join(ws.designsDir, file));
     if (design?.folderId === id) {
-      await writeJsonFile(path.join(ws.designsDir, file), { ...design, folderId: undefined });
+      await writeDesign(ws, { ...design, folderId: undefined }, design);
       unfiled += 1;
     }
   }
@@ -505,7 +430,7 @@ function isSafeAssetFile(file: string): boolean {
 }
 
 /** The person's upload library, newest first, with where each image is used. */
-app.get("/api/assets", async (c) => {
+async function listAssets(c: Context<AppEnv>): Promise<Response> {
   const ws = c.get("ws");
   let files: string[];
   try {
@@ -536,7 +461,9 @@ app.get("/api/assets", async (c) => {
       .filter((info): info is AssetInfo => info !== null)
       .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)),
   );
-});
+}
+
+app.get("/api/assets", listAssets);
 
 app.post("/api/assets", async (c) => {
   const ws = c.get("ws");
@@ -558,6 +485,7 @@ app.post("/api/assets", async (c) => {
   if (typeof folderId === "string" && isSafeId(folderId)) {
     await placeAssets(ws, [asset], folderId);
   }
+  publish(ws, { type: "assets.changed" });
   return c.json({ asset, name: file.name }, 201);
 });
 
@@ -575,6 +503,7 @@ app.patch("/api/assets/:file", async (c) => {
   const manifest = await readAssetManifest(ws);
   manifest[file] = name;
   await writeJsonFile(ws.assetsManifestFile, manifest);
+  publish(ws, { type: "assets.changed" });
   return c.json({ asset: file, name });
 });
 
@@ -606,6 +535,7 @@ app.delete("/api/assets/:file", async (c) => {
     await writeJsonFile(ws.assetsManifestFile, manifest);
   }
   await forgetAsset(ws, file);
+  publish(ws, { type: "assets.changed" });
   return c.json({ ok: true });
 });
 
@@ -709,6 +639,9 @@ app.get("/api/fonts/file", async (c) => {
   return c.body(bytes, 200, headers);
 });
 
+registerFontFiles(app);
+registerFontRoutes(app, "/api/fonts/custom");
+
 app.get("/api/fonts/favorites", async (c) => {
   return c.json(await readFavorites(c.get("ws")));
 });
@@ -724,6 +657,9 @@ app.put("/api/fonts/favorites", async (c) => {
 
 registerAiRoutes(app);
 registerAssetFolderRoutes(app, isSafeAssetFile);
+registerAgentRoutes(app, { isSafeAssetFile, listAssets });
+registerShareRoutes(app, { isSafeAssetFile, imageTypes: IMAGE_TYPES });
+registerSourceFileRoute(app);
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 

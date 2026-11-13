@@ -10,6 +10,7 @@ import {
   type AssetInfo,
   type BlockDesign,
   type Design,
+  type DesignLock,
   type DesignPage,
   type DesignSummary,
   type DocumentSource,
@@ -29,8 +30,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * This tab's id, sent with every request so live updates can tell this
+ * tab's own changes from changes made elsewhere.
+ */
+export const CLIENT_ID = Math.random().toString(36).slice(2, 12);
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const headers = new Headers(init?.headers);
+  headers.set("X-MyCanvas-Client", CLIENT_ID);
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok) {
     let message = res.statusText;
     let body: unknown;
@@ -58,6 +67,21 @@ function jsonInit(method: string, body: unknown): RequestInit {
 
 export type { AssetInfo };
 
+/** A design's share link (server: share-routes.ts). */
+export interface ShareInfo {
+  token: string;
+  /** "/s/<token>" */
+  path: string;
+  hasPin: boolean;
+  createdAt: string;
+}
+
+export interface ShareState {
+  share: ShareInfo | null;
+  /** The public host for links (MYCANVAS_PUBLIC_URL), when the server knows it. */
+  publicUrl?: string | null;
+}
+
 export interface CreateDesignInput {
   name?: string;
   aspectRatioId?: string;
@@ -75,8 +99,14 @@ export interface CreateDesignInput {
   blocks?: BlockDesign;
 }
 
-/** An editor save; `kind: null` turns a format back into a plain design. */
-export type DesignUpdate = Omit<Design, "kind"> & { kind: "format" | null };
+/**
+ * An editor save; `kind: null` turns a format back into a plain design.
+ * `baseRevision` is the revision the edit started from: the server refuses
+ * the save (409) when the stored design is newer.
+ */
+export type DesignUpdate = Omit<Design, "kind"> & { kind: "format" | null; baseRevision?: number };
+
+export type { DesignLock };
 
 export interface Me {
   email: string;
@@ -108,6 +138,20 @@ export const api = {
   /** null unfiles the design. */
   moveDesign: (id: string, folderId: string | null) =>
     request<DesignSummary>(`/api/designs/${encodeURIComponent(id)}/move`, jsonInit("POST", { folderId })),
+  /** Every locked design (lock badges in the project list). */
+  getShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`),
+  /** Creates or changes the link: `pin` null removes it; `newLink` throws the old one away. */
+  saveShare: (id: string, change: { pin?: string | null; newLink?: boolean }) =>
+    request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, jsonInit("PUT", change)),
+  stopShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, { method: "DELETE" }),
+  listLocks: () => request<DesignLock[]>("/api/locks"),
+  getLock: (id: string) => request<DesignLock | null>(`/api/designs/${encodeURIComponent(id)}/lock`),
+  /** Locks the design to this person (first edit); ApiError 423 while Claude has it. */
+  lockDesign: (id: string) => request<DesignLock>(`/api/designs/${encodeURIComponent(id)}/lock`, { method: "POST" }),
+  /** Takes the design back from Claude at once. */
+  takeOverDesign: (id: string) => request<DesignLock>(`/api/designs/${encodeURIComponent(id)}/lock/takeover`, { method: "POST" }),
+  unlockDesign: (id: string) =>
+    request<{ ok: boolean; released: boolean }>(`/api/designs/${encodeURIComponent(id)}/lock`, { method: "DELETE" }),
   listFolders: () => request<Folder[]>("/api/folders"),
   createFolder: (name: string) => request<Folder>("/api/folders", jsonInit("POST", { name })),
   renameFolder: (id: string, name: string) =>

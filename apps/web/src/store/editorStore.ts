@@ -1,6 +1,7 @@
 import {
   type BlockDesign,
   type Design,
+  type DesignLock,
   type DesignPage,
   type DocumentSource,
   type FormatAiInstructions,
@@ -13,12 +14,15 @@ import {
   type PageContent,
   type TextLayer,
   defaultShadow,
+  frameContentBox,
   normalizeDesign,
+  recoverContent,
 } from "@mycanvas/shared";
 import { create } from "zustand";
 import { ApiError, type DesignUpdate, api } from "../api";
 import { makeDesignThumbnail } from "../utils/canvas-bridge";
 import { ensureFontsLoaded } from "../utils/fonts";
+import { getCachedImageSize } from "../hooks/useImage";
 
 export type SaveStatus = "saved" | "saving" | "dirty";
 export type LoadStatus = "loading" | "ready" | "not-found" | "error";
@@ -87,6 +91,28 @@ type TextStyle = Pick<TextLayer,
   | "shadow" | "stroke" | "opacity">;
 
 const HISTORY_LIMIT = 100;
+
+/**
+ * Applies a patch to a layer. A frame whose photo box changes (resize, or a
+ * rotation while the photo keeps its angle) gets its photo re-covered, unless
+ * the patch places the photo itself.
+ */
+function patchLayer(layer: Layer, patch: LayerPatch): Layer {
+  const next = { ...layer, ...patch } as Layer;
+  if (layer.type !== "frame" || next.type !== "frame" || !layer.content || !next.content || "content" in patch) {
+    return next;
+  }
+  const before = frameContentBox(layer);
+  const after = frameContentBox(next);
+  if (before.width === after.width && before.height === after.height) {
+    return next;
+  }
+  const natural = getCachedImageSize(`/assets/${layer.content.asset}`);
+  if (!natural) {
+    return next;
+  }
+  return { ...next, content: recoverContent(layer.content, natural.width, natural.height, before.width, before.height, after.width, after.height) };
+}
 const AUTOSAVE_DELAY_MS = 800;
 
 export interface EditorStore {
@@ -105,6 +131,26 @@ export interface EditorStore {
 
   loadDesign: (id: string) => Promise<void>;
   unload: () => void;
+  /** Unsaved changes made by this person (not just a pending preview refresh). */
+  unsavedEdits: boolean;
+  /** Who is editing the open design: null = nobody (anyone's first edit locks it). */
+  lock: DesignLock | null;
+  setLock: (lock: DesignLock | null) => void;
+  /** Takes the design back from Claude. */
+  takeOver: () => Promise<void>;
+  /** Saves pending changes, then releases this person's lock. Resolves true when unlocked. */
+  unlock: () => Promise<boolean>;
+  /**
+   * Brings in a newer version saved elsewhere (Claude or another tab):
+   * keeps the open page and selection where they still exist, clears undo
+   * history. `message` is shown as a toast.
+   */
+  syncFromServer: (message?: string) => Promise<void>;
+  /**
+   * Shows a design fetched elsewhere, read-only (the share viewer): keeps the
+   * open page when it still exists, never saves.
+   */
+  presentDesign: (design: Design) => void;
   /** Replace the selection (group-aware: a member selects its whole group). */
   selectLayer: (id: string | null) => void;
   /** Shift-click toggle (group-aware). */
@@ -195,6 +241,14 @@ export interface EditorStore {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saveInFlight = false;
+/** The server's headless renderer: it only reads and draws, never saves or locks. */
+let headless = false;
+
+export function setHeadlessMode(on: boolean): void {
+  headless = on;
+}
+let saveAgain = false;
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** In-app layer clipboard (z-order preserved; shared across designs). */
@@ -215,7 +269,8 @@ export function primarySelectedId(state: { selectedLayerIds: string[] }): string
  * UI path can bypass the freeze.
  */
 function patchAllowedOnLocked(patch: LayerPatch): boolean {
-  return Object.keys(patch).every((key) => key === "locked");
+  // Locking and naming the layer's group don't change what it looks like.
+  return Object.keys(patch).every((key) => key === "locked" || key === "groupName");
 }
 
 /** Sequential names: next free image_N across the design, case-insensitive. */
@@ -315,7 +370,21 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
     markDirty();
   };
 
-  const markDirty = () => {
+  /**
+   * Marks unsaved changes and schedules the autosave. A real edit (`edit`,
+   * the default) also locks the design to this person on the first change;
+   * housekeeping saves (a missing preview) never lock.
+   */
+  const markDirty = (edit = true) => {
+    if (headless) {
+      return;
+    }
+    if (edit && get().lock?.holder !== "human") {
+      requestLock();
+    }
+    if (edit && !get().unsavedEdits) {
+      set({ unsavedEdits: true });
+    }
     if (get().saveStatus !== "dirty") {
       set({ saveStatus: "dirty" });
     }
@@ -325,6 +394,32 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
     saveTimer = setTimeout(() => {
       void get().saveNow();
     }, AUTOSAVE_DELAY_MS);
+  };
+
+  let lockRequest: Promise<void> | null = null;
+
+  /** Locks the open design to this person (first edit). */
+  const requestLock = () => {
+    const design = get().design;
+    if (!design || lockRequest) {
+      return;
+    }
+    lockRequest = api.lockDesign(design.id)
+      .then((lock) => {
+        if (get().design?.id === design.id) {
+          set({ lock });
+        }
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 423 && get().design?.id === design.id) {
+          const lock = (error.body as { lock?: DesignLock } | undefined)?.lock ?? null;
+          set({ lock });
+          get().showToast(`${lock?.label ?? "Claude"} is editing this design, so your change can't be saved.`);
+        }
+      })
+      .finally(() => {
+        lockRequest = null;
+      });
   };
 
   const pushHistory = () => {
@@ -392,7 +487,14 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         editingTextLayerId: null,
         editingFrameId: null,
         contextMenu: null,
+        lock: null,
+        unsavedEdits: false,
       });
+      void api.getLock(id).then((lock) => {
+        if (get().design?.id === id || get().loadStatus === "loading") {
+          set({ lock });
+        }
+      }).catch(() => undefined);
       try {
         const design = normalizeDesign(await api.getDesign(id));
         design.pages = design.pages.map((page) => ({ ...page, layers: page.layers.map(migrateTextEffect) }));
@@ -410,8 +512,9 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
           }
           setTimeout(() => {
             const state = get();
-            if (state.design?.id === id && state.activePageId === firstPageId && !state.design.pages[0]?.thumbnail) {
-              markDirty();
+            // Not while Claude holds the lock: it couldn't be saved anyway.
+            if (state.design?.id === id && state.activePageId === firstPageId && !state.design.pages[0]?.thumbnail && state.lock?.holder !== "agent") {
+              markDirty(false);
             }
           }, 1500);
         });
@@ -440,7 +543,120 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         pendingSnapshot: null,
         editingTextLayerId: null,
         editingFrameId: null,
+        lock: null,
+        unsavedEdits: false,
       });
+    },
+
+    lock: null,
+    unsavedEdits: false,
+
+    setLock: (lock) => {
+      set({ lock });
+    },
+
+    takeOver: async () => {
+      const design = get().design;
+      if (!design) {
+        return;
+      }
+      try {
+        const lock = await api.takeOverDesign(design.id);
+        set({ lock });
+      } catch {
+        get().showToast("Couldn't take the design over. Check the connection and try again.");
+      }
+    },
+
+    unlock: async () => {
+      const design = get().design;
+      if (!design) {
+        return false;
+      }
+      get().commitTransient();
+      await get().saveNow();
+      if (get().saveStatus !== "saved") {
+        get().showToast("Your last changes aren't saved yet, so the design stays locked.");
+        return false;
+      }
+      try {
+        await api.unlockDesign(design.id);
+        set({ lock: null });
+        return true;
+      } catch {
+        get().showToast("Couldn't unlock the design. Check the connection and try again.");
+        return false;
+      }
+    },
+
+    syncFromServer: async (message) => {
+      const current = get().design;
+      if (!current) {
+        return;
+      }
+      let fresh: Design;
+      try {
+        fresh = normalizeDesign(await api.getDesign(current.id));
+      } catch {
+        return;
+      }
+      const state = get();
+      if (state.design?.id !== current.id) {
+        return;
+      }
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      fresh.pages = fresh.pages.map((page) => ({ ...page, layers: page.layers.map(migrateTextEffect) }));
+      const pageId = fresh.pages.some((page) => page.id === state.activePageId) ? state.activePageId : fresh.pages[0]?.id ?? "";
+      const next = withActivePage(fresh, pageId);
+      const ids = new Set(next.layers.map((layer) => layer.id));
+      set({
+        design: next,
+        activePageId: pageId,
+        saveStatus: "saved",
+        unsavedEdits: false,
+        selectedLayerIds: state.selectedLayerIds.filter((id) => ids.has(id)),
+        editingGroupId: state.editingGroupId && next.layers.some((layer) => layer.groupId === state.editingGroupId) ? state.editingGroupId : null,
+        editingTextLayerId: state.editingTextLayerId && ids.has(state.editingTextLayerId) ? state.editingTextLayerId : null,
+        editingFrameId: state.editingFrameId && ids.has(state.editingFrameId) ? state.editingFrameId : null,
+        contextMenu: null,
+        // Undoing past someone else's changes would fight the lock.
+        past: [],
+        future: [],
+        pendingSnapshot: null,
+      });
+      void ensureFontsLoaded(fresh.pages.flatMap((page) => page.layers).filter((layer): layer is TextLayer => layer.type === "text"));
+      if (message) {
+        get().showToast(message);
+      }
+    },
+
+    presentDesign: (incoming) => {
+      const fresh = normalizeDesign(incoming);
+      fresh.pages = fresh.pages.map((page) => ({ ...page, layers: page.layers.map(migrateTextEffect) }));
+      const state = get();
+      const pageId = state.design?.id === fresh.id && fresh.pages.some((page) => page.id === state.activePageId)
+        ? state.activePageId
+        : fresh.pages[0]?.id ?? "";
+      set({
+        design: withActivePage(fresh, pageId),
+        activePageId: pageId,
+        loadStatus: "ready",
+        saveStatus: "saved",
+        unsavedEdits: false,
+        selectedLayerIds: [],
+        editingGroupId: null,
+        editingTextLayerId: null,
+        editingFrameId: null,
+        contextMenu: null,
+        past: [],
+        future: [],
+        pendingSnapshot: null,
+        lock: null,
+      });
+      void ensureFontsLoaded(fresh.pages.flatMap((page) => page.layers).filter((layer): layer is TextLayer => layer.type === "text"));
     },
 
     selectLayer: (id) => {
@@ -649,7 +865,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         (design) => ({
           // The patch only carries fields valid for the target's type; the
           // spread widens to the intersection, so narrow it back explicitly.
-          layers: design.layers.map((layer) => (layer.id === id ? ({ ...layer, ...patch }) as Layer : layer)),
+          layers: design.layers.map((layer) => (layer.id === id ? patchLayer(layer, patch) : layer)),
         }),
         transient,
       );
@@ -672,7 +888,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         (current) => ({
           layers: current.layers.map((layer) => {
             const patch = patches.get(layer.id);
-            return patch ? ({ ...layer, ...patch }) as Layer : layer;
+            return patch ? patchLayer(layer, patch) : layer;
           }),
         }),
         false,
@@ -907,7 +1123,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
         const members = memberIndices
           .map((index) => current.layers[index])
           .filter((layer): layer is Layer => Boolean(layer))
-          .map((layer) => ({ ...layer, groupId }));
+          .map((layer) => ({ ...layer, groupId, groupName: undefined }));
         const nonMembers = current.layers.filter((layer) => !ids.includes(layer.id));
         const topIndex = memberIndices[memberIndices.length - 1] ?? 0;
         const insertAt = Math.max(0, topIndex - (memberIndices.length - 1));
@@ -932,7 +1148,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       mutate(
         (current) => ({
           layers: current.layers.map((layer) =>
-            layer.groupId && groupIds.has(layer.groupId) ? { ...layer, groupId: undefined } : layer),
+            layer.groupId && groupIds.has(layer.groupId) ? { ...layer, groupId: undefined, groupName: undefined } : layer),
         }),
         false,
       );
@@ -979,6 +1195,16 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       if (!design || get().saveStatus === "saved") {
         return;
       }
+      // Claude is editing: nothing of ours can be saved until Luis takes over.
+      if (get().lock?.holder === "agent") {
+        return;
+      }
+      if (saveInFlight) {
+        // One save at a time, so each starts from the revision the last one made.
+        saveAgain = true;
+        return;
+      }
+      saveInFlight = true;
       set({ saveStatus: "saving" });
       try {
         // The open page gets a fresh preview; the first page's preview also
@@ -996,16 +1222,20 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
           thumbnail: pages[0]?.thumbnail,
           // Explicit null so turning "format" off reaches the server.
           kind: design.kind ?? null,
+          baseRevision: design.revision ?? 0,
         };
         const saved = await api.updateDesign(design.id, payload);
         const current = get().design;
+        const savedAll = get().saveStatus === "saving";
         set({
-          saveStatus: get().saveStatus === "saving" ? "saved" : get().saveStatus,
+          saveStatus: savedAll ? "saved" : get().saveStatus,
+          unsavedEdits: savedAll ? false : get().unsavedEdits,
           ...(current
             ? {
                 design: {
                   ...current,
                   updatedAt: saved.updatedAt,
+                  revision: saved.revision,
                   thumbnail: payload.thumbnail ?? current.thumbnail,
                   // Keep the new preview without touching newer edits.
                   pages: current.pages.map((page) =>
@@ -1014,8 +1244,24 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
               }
             : {}),
         });
-      } catch {
+      } catch (error) {
         set({ saveStatus: "dirty" });
+        if (error instanceof ApiError && error.status === 423) {
+          set({ lock: (error.body as { lock?: DesignLock } | undefined)?.lock ?? null });
+        } else if (error instanceof ApiError && error.status === 409) {
+          saveInFlight = false;
+          saveAgain = false;
+          await get().syncFromServer("This design changed elsewhere, so your last change wasn't saved. It now shows the latest version.");
+          return;
+        }
+      } finally {
+        saveInFlight = false;
+      }
+      if (saveAgain) {
+        saveAgain = false;
+        if (get().saveStatus === "dirty") {
+          void get().saveNow();
+        }
       }
     },
 
@@ -1098,7 +1344,7 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
           ...page,
           layers: page.layers.map((layer) => {
             const patch = patches.get(layer.id);
-            return patch && !(layer.locked && !patchAllowedOnLocked(patch)) ? ({ ...layer, ...patch }) as Layer : layer;
+            return patch && !(layer.locked && !patchAllowedOnLocked(patch)) ? patchLayer(layer, patch) : layer;
           }),
         })),
         activePageId,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { GOOGLE_FONTS, type GoogleFont } from "@mycanvas/shared";
 import { api } from "../api";
+import { customFonts, deleteCustomFont, uploadCustomFont, useCustomFontsVersion } from "../utils/custom-fonts";
 import { ensureFontLoaded, isGoogleFont, listLocalFonts } from "../utils/fonts";
 
 interface FontPickerProps {
@@ -15,6 +16,9 @@ export function FontPicker({ value, onApply, compact = false }: FontPickerProps)
   const [filter, setFilter] = useState("");
   const [favorites, setFavorites] = useState<string[] | null>(null);
   const [systemFonts, setSystemFonts] = useState<string[] | null>(null);
+  useCustomFontsVersion();
+  const [fontNotice, setFontNotice] = useState<{ kind: "error" | "ok"; text: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const groupsRef = useRef<HTMLDivElement | null>(null);
 
@@ -96,6 +100,35 @@ export function FontPicker({ value, onApply, compact = false }: FontPickerProps)
   const matches = (family: string) => !query || family.toLowerCase().includes(query);
 
   const favoriteFonts = (favorites ?? []).filter(matches);
+  const ownFamilies = [...new Set(customFonts().map((font) => font.family))].filter(matches);
+
+  const addFonts = async (files: FileList | null) => {
+    if (!files || files.length === 0) {
+      return;
+    }
+    setUploading(true);
+    setFontNotice(null);
+    const added: string[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        const font = await uploadCustomFont(file);
+        added.push(`${font.family} ${String(font.weight)}${font.italic ? " italic" : ""}`);
+      }
+      setFontNotice({ kind: "ok", text: `Added ${added.join(", ")}` });
+    } catch (reason) {
+      setFontNotice({ kind: "error", text: reason instanceof Error ? reason.message : "The font couldn't be added" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeFamily = (family: string) => {
+    if (!window.confirm(`Remove "${family}" from your fonts? Text using it will show another font.`)) {
+      return;
+    }
+    void Promise.all(customFonts().filter((font) => font.family === family).map((font) => deleteCustomFont(font.id)))
+      .catch(() => { setFontNotice({ kind: "error", text: "The font couldn't be removed" }); });
+  };
   const googleFonts = GOOGLE_FONTS.filter((font) => matches(font.family));
   const localFonts = (systemFonts ?? []).filter(matches);
 
@@ -154,6 +187,58 @@ export function FontPicker({ value, onApply, compact = false }: FontPickerProps)
             }}
           />
           <div className="font-groups" ref={groupsRef}>
+            <div className="font-group">
+              <div className="font-group-head">
+                <h4>Your fonts</h4>
+                <label className={uploading ? "font-add disabled" : "font-add"} title="Add .ttf or .otf files (one per weight/style)">
+                  {uploading ? "Adding…" : "Add font…"}
+                  <input
+                    type="file"
+                    accept=".ttf,.otf"
+                    multiple
+                    disabled={uploading}
+                    onChange={(e) => {
+                      void addFonts(e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              {fontNotice && <p className={fontNotice.kind === "error" ? "font-notice error" : "font-notice"}>{fontNotice.text}</p>}
+              {ownFamilies.length === 0 && !query && (
+                <p className="muted font-empty">Upload your own fonts (.ttf or .otf). They work in the editor and in PDF exports.</p>
+              )}
+              {ownFamilies.map((family) => {
+                const faces = customFonts().filter((font) => font.family === family);
+                const variable = faces.some((font) => font.variable);
+                return (
+                  <div key={family} className="font-row">
+                    <button
+                      type="button"
+                      className="font-name"
+                      style={{ fontFamily: `"${family}"` }}
+                      title={variable ? "Variable font: PDF exports use its default weight" : `${String(faces.length)} ${faces.length === 1 ? "style" : "styles"}`}
+                      onClick={() => {
+                        apply(family);
+                      }}
+                    >
+                      {family}
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      title={`Remove ${family}`}
+                      aria-label={`Remove ${family}`}
+                      onClick={() => {
+                        removeFamily(family);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
             {favoriteFonts.length > 0 && (
               <div className="font-group">
                 <h4>Favorites</h4>

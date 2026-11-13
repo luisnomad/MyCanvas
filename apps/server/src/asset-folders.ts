@@ -3,6 +3,7 @@ import { type Hono } from "hono";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { type Identity } from "./auth";
+import { publish } from "./events";
 import { type Workspace, isSafeId, newId, readJsonFile, writeJsonFile } from "./storage";
 
 /*
@@ -69,10 +70,11 @@ function byName(folders: Folder[]): Folder[] {
   return [...folders].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
 
-export function registerAssetFolderRoutes(app: Hono<AppEnv>, isAssetFile: (file: string) => boolean): void {
-  app.get("/api/asset-folders", async (c) => c.json(byName((await readAssetFolders(c.get("ws"))).folders)));
+/** Registers the routes under `prefix` ("/api" for the editor, the agent API base for Claude). */
+export function registerAssetFolderRoutes(app: Hono<AppEnv>, isAssetFile: (file: string) => boolean, prefix = "/api"): void {
+  app.get(`${prefix}/asset-folders`, async (c) => c.json(byName((await readAssetFolders(c.get("ws"))).folders)));
 
-  app.post("/api/asset-folders", async (c) => {
+  app.post(`${prefix}/asset-folders`, async (c) => {
     const ws = c.get("ws");
     const name = cleanName((await c.req.json<{ name?: unknown }>()).name);
     if (!name) {
@@ -88,7 +90,7 @@ export function registerAssetFolderRoutes(app: Hono<AppEnv>, isAssetFile: (file:
     return c.json(folder, 201);
   });
 
-  app.patch("/api/asset-folders/:id", async (c) => {
+  app.patch(`${prefix}/asset-folders/:id`, async (c) => {
     const ws = c.get("ws");
     const id = c.req.param("id");
     const name = cleanName((await c.req.json<{ name?: unknown }>()).name);
@@ -109,7 +111,7 @@ export function registerAssetFolderRoutes(app: Hono<AppEnv>, isAssetFile: (file:
   });
 
   /** Deletes a folder; its uploads are kept and become unfiled. */
-  app.delete("/api/asset-folders/:id", async (c) => {
+  app.delete(`${prefix}/asset-folders/:id`, async (c) => {
     const ws = c.get("ws");
     const id = c.req.param("id");
     const data = await readAssetFolders(ws);
@@ -123,7 +125,7 @@ export function registerAssetFolderRoutes(app: Hono<AppEnv>, isAssetFile: (file:
   });
 
   /** Moves uploads into a folder, or out of any folder with `folderId: null`. */
-  app.post("/api/assets/move", async (c) => {
+  app.post(`${prefix}/assets/move`, async (c) => {
     const ws = c.get("ws");
     const body = await c.req.json<{ assets?: unknown; folderId?: unknown }>();
     const assets = Array.isArray(body.assets) ? body.assets.filter((asset): asset is string => typeof asset === "string") : [];
@@ -137,6 +139,7 @@ export function registerAssetFolderRoutes(app: Hono<AppEnv>, isAssetFile: (file:
     if (folderId === "" || !await placeAssets(ws, assets, folderId)) {
       return c.json({ error: "Folder not found" }, 404);
     }
+    publish(ws, { type: "assets.changed" });
     return c.json({ ok: true, moved: assets.length });
   });
 }

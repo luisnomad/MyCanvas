@@ -1,4 +1,4 @@
-import { type LineLayer, type RectLayer, type ShapeLayer } from "@mycanvas/shared";
+import { type LineLayer, type RectLayer, type ShapeLayer, controlForMidpoint } from "@mycanvas/shared";
 import { ColorField, NumberField, type SectionProps } from "./fields";
 import { FillField } from "./FillField";
 import { Panel } from "./Panel";
@@ -96,6 +96,16 @@ export function ShapeSection({ layer, patch, commit }: SectionProps<ShapeLayer>)
 }
 
 /** Line: color, width, cap. */
+/** A gentle arc to start from: the middle lifted by a quarter of the length. */
+function bentControl(points: LineLayer["points"]): [number, number] {
+  const [x1, y1, x2, y2] = points;
+  const length = Math.hypot(x2 - x1, y2 - y1) || 1;
+  // Lift perpendicular to the line (upwards for a left-to-right line).
+  const lift = length / 4;
+  const mid: [number, number] = [(x1 + x2) / 2 + ((y2 - y1) / length) * lift, (y1 + y2) / 2 - ((x2 - x1) / length) * lift];
+  return controlForMidpoint(points, mid);
+}
+
 export function LineSection({ layer, patch, commit }: SectionProps<LineLayer>) {
   return (
     <Panel title="Line">
@@ -131,6 +141,16 @@ export function LineSection({ layer, patch, commit }: SectionProps<LineLayer>) {
           <option value="square">Square</option>
         </select>
       </label>
+      <button
+        type="button"
+        className="secondary block"
+        onClick={() => {
+          patch({ control: layer.control ? undefined : bentControl(layer.points) });
+        }}
+      >
+        {layer.control ? "Straighten" : "Bend into a curve"}
+      </button>
+      <p className="muted field-note">Drag the round handle in the middle of the line to bend it; double-click the handle to straighten.</p>
     </Panel>
   );
 }

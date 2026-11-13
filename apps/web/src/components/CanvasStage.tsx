@@ -1,7 +1,7 @@
 import Konva from "konva";
 import { type DragEvent as ReactDragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Arc, Circle, Group, Image as KonvaImage, Layer, Line, Path, Rect, Shape, Stage, Transformer } from "react-konva";
-import { type FrameContent, type Layer as EditorLayer } from "@mycanvas/shared";
+import { type FrameContent, type Layer as EditorLayer, frameContentBox } from "@mycanvas/shared";
 import { api } from "../api";
 import { type EditorDesign, useEditorStore, primarySelectedId } from "../store/editorStore";
 import { getCachedImageSize, useImage } from "../hooks/useImage";
@@ -17,10 +17,13 @@ import {
   fillFrame,
   framePathData,
   getCurrentAssetDrag,
-  recoverContent,
+  followFrameBox,
+  frameContentHolder,
+  syncContentHolder,
   traceFramePath,
 } from "../utils/frames";
 import { LayerNode } from "./LayerNode";
+import { LineBendHandle } from "./LineBendHandle";
 import { Rulers } from "./Rulers";
 import { TextEditorOverlay } from "./TextEditorOverlay";
 
@@ -161,25 +164,7 @@ function bakeMiddleTransform(
     node.height(newH);
     node.scaleX(baseScale.x);
     node.scaleY(baseScale.y);
-    const imageNode = node.findOne("Image");
-    if (layer.content && imageNode instanceof Konva.Image) {
-      const natural = getCachedImageSize(`/assets/${layer.content.asset}`);
-      if (natural) {
-        const next = recoverContent(
-          { asset: layer.content.asset, offsetX: imageNode.x(), offsetY: imageNode.y(), scale: imageNode.scaleX() },
-          natural.width,
-          natural.height,
-          prevW,
-          prevH,
-          newW,
-          newH,
-        );
-        imageNode.x(next.offsetX);
-        imageNode.y(next.offsetY);
-        imageNode.scaleX(next.scale);
-        imageNode.scaleY(next.scale);
-      }
-    }
+    followFrameBox(node, layer.content, layer.contentRotation);
     return true;
   }
   if (layer.type === "text" && MIDDLE_X_ANCHORS.has(anchor)) {
@@ -555,6 +540,12 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
       return;
     }
     const layer = useEditorStore.getState().design?.layers.find((entry) => entry.id === node.id());
+    if (anchor === "rotater" && layer?.type === "frame" && layer.contentRotation !== undefined && node instanceof Konva.Container) {
+      // The photo keeps its angle on the page while the frame turns.
+      followFrameBox(node, layer.content, layer.contentRotation);
+      node.getLayer()?.batchDraw();
+      return;
+    }
     if (layer && bakeMiddleTransform(node, layer, anchor, transformBaseScaleRef.current)) {
       node.getLayer()?.batchDraw();
     }
@@ -604,7 +595,12 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
       const points: [number, number, number, number] = anchor === "middle-left"
         ? [x2 - width * delta, y1, x2, y2]
         : [x1, y1, x1 + width * delta, y2];
-      updateLayer(layer.id, { ...pos, x: layer.x, points, scaleX: base, scaleY: sy });
+      // A bend stretches with the line, away from the end that stays put.
+      const fixedX = anchor === "middle-left" ? x2 : x1;
+      const control: [number, number] | undefined = layer.control
+        ? [fixedX + (layer.control[0] - fixedX) * delta, layer.control[1]]
+        : undefined;
+      updateLayer(layer.id, { ...pos, x: layer.x, points, ...(control ? { control } : {}), scaleX: base, scaleY: sy });
       return;
     }
 
@@ -647,6 +643,8 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
       const prev = layer.content;
       let content: FrameContent | undefined;
       const imageNode = node.findOne("Image");
+      syncContentHolder(node, layer.contentRotation);
+      const box = frameContentBox({ width, height, rotation: node.rotation(), contentRotation: layer.contentRotation });
       if (prev && imageNode instanceof Konva.Image) {
         const natural = getCachedImageSize(`/assets/${prev.asset}`);
         if (natural) {
@@ -654,8 +652,8 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
             { asset: prev.asset, offsetX: imageNode.x(), offsetY: imageNode.y(), scale: imageNode.scaleX() },
             natural.width,
             natural.height,
-            width,
-            height,
+            box.width,
+            box.height,
           );
           imageNode.x(content.offsetX);
           imageNode.y(content.offsetY);
@@ -754,8 +752,9 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
       return;
     }
     const imageNode = node.findOne("Image");
+    const holder = frameContentHolder(node);
     const natural = getCachedImageSize(`/assets/${layer.content.asset}`);
-    if (!(imageNode instanceof Konva.Image) || !natural) {
+    if (!(imageNode instanceof Konva.Image) || !holder || !natural) {
       return;
     }
     const stage = node.getStage();
@@ -775,15 +774,15 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
     setContentEditBox({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
 
     const clampDraft = () => {
-      const next = clampContent(draft, natural.width, natural.height, node.width(), node.height());
+      const next = clampContent(draft, natural.width, natural.height, holder.width(), holder.height());
       draft.offsetX = next.offsetX;
       draft.offsetY = next.offsetY;
       draft.scale = next.scale;
     };
 
     // Pan: mousedown on the frame tracks pointer deltas. Convert screen deltas
-    // to frame-local units (derotate, unscale) so rotated/scaled frames pan
-    // true to the cursor.
+    // to the photo's own units (derotate, unscale) so rotated/scaled frames
+    // pan true to the cursor.
     let panning = false;
     let lastX = 0;
     let lastY = 0;
@@ -801,7 +800,7 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
       const dy = ev.clientY - lastY;
       lastX = ev.clientX;
       lastY = ev.clientY;
-      const theta = (node.rotation() * Math.PI) / 180;
+      const theta = ((node.rotation() + holder.rotation()) * Math.PI) / 180;
       const gs = Math.abs(node.scaleX()) || 1;
       draft.offsetX += ((dx * Math.cos(theta) + dy * Math.sin(theta)) / gs) * (1 / scaleRef.current);
       draft.offsetY += ((-dx * Math.sin(theta) + dy * Math.cos(theta)) / gs) * (1 / scaleRef.current);
@@ -822,12 +821,13 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
         x: (ev.clientX - containerRect.left) / scaleRef.current,
         y: (ev.clientY - containerRect.top) / scaleRef.current,
       };
-      const local = node.getAbsoluteTransform().copy().invert().point(point);
-      if (local.x < 0 || local.y < 0 || local.x > node.width() || local.y > node.height()) {
+      const inFrame = node.getAbsoluteTransform().copy().invert().point(point);
+      if (inFrame.x < 0 || inFrame.y < 0 || inFrame.x > node.width() || inFrame.y > node.height()) {
         return; // wheel outside the frame — leave to the page
       }
       ev.preventDefault();
-      const minScale = coverScale(natural.width, natural.height, node.width(), node.height());
+      const local = holder.getAbsoluteTransform().copy().invert().point(point);
+      const minScale = coverScale(natural.width, natural.height, holder.width(), holder.height());
       const next = Math.min(minScale * 16, Math.max(minScale, draft.scale * Math.exp(-ev.deltaY * 0.0015)));
       draft.offsetX = local.x - ((local.x - draft.offsetX) / draft.scale) * next;
       draft.offsetY = local.y - ((local.y - draft.offsetY) / draft.scale) * next;
@@ -1732,6 +1732,14 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
                   borderStroke={accentColor}
                   borderEnabled={selectedLayerIds.length <= 1}
                 />
+                {selectedLayer?.type === "line" && !selectedLayer.locked && !editingLayer && nodesRef.current.get(selectedLayer.id) && (
+                  <LineBendHandle
+                    layer={selectedLayer}
+                    node={nodesRef.current.get(selectedLayer.id)!}
+                    scale={scale}
+                    color={accentColor}
+                  />
+                )}
               </Layer>
             </Stage>
             {editingLayer?.type === "text" && (

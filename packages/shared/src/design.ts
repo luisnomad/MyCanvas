@@ -28,6 +28,8 @@ interface LayerBase {
   visible: boolean;
   /** Group membership; layers sharing a groupId form a contiguous run. */
   groupId?: string;
+  /** The group's name, kept on each member (absent = "Group N"). */
+  groupName?: string;
   /** Locked layers: selectable but frozen — no transform/drag/nudge/delete/
    *  z-order/property edits, and marquee selection skips them. */
   locked?: boolean;
@@ -195,6 +197,9 @@ export interface RectLayer extends LayerBase {
 export interface LineLayer extends LayerBase {
   type: "line";
   points: [number, number, number, number];
+  /** Bend point: present = a smooth curve (quadratic Bézier) from the first
+   *  point to the second, pulled towards this point (same units as points). */
+  control?: [number, number];
   strokeColor: string;
   strokeWidth: number;
   lineCap: "butt" | "round" | "square";
@@ -239,6 +244,12 @@ export interface FrameLayer extends LayerBase {
   adjust?: ImageAdjustments;
   flipX?: boolean;
   flipY?: boolean;
+  /**
+   * The photo's angle on the page, in degrees. Set: the photo keeps that
+   * angle when the frame rotates (content offsets are then in the box from
+   * frameContentBox). Absent: the photo turns with the frame.
+   */
+  contentRotation?: number;
 }
 
 export type Layer = TextLayer | ImageLayer | RectLayer | LineLayer | ShapeLayer | FrameLayer;
@@ -281,6 +292,8 @@ export interface Design {
   formatAi?: FormatAiInstructions;
   /** Designs made of visual blocks: the theme and each page's block. */
   blocks?: BlockDesign;
+  /** Incremented by the server on every write; absent on older files (= 0). */
+  revision?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -355,6 +368,8 @@ export interface DesignSummary {
   thumbnail?: string;
   createdAt: string;
   updatedAt: string;
+  /** The design's current revision (0 for files from before revisions). */
+  revision?: number;
 }
 
 export function defaultShadow(): ShadowEffect {
@@ -363,4 +378,30 @@ export function defaultShadow(): ShadowEffect {
 
 export function defaultStroke(): StrokeEffect {
   return { enabled: false, color: "#000000", width: 2 };
+}
+
+/** Who is editing a design (see docs/AGENT_API.md, "Lock model"). */
+export interface DesignLock {
+  designId: string;
+  holder: "agent" | "human";
+  /** "Claude" or the person's email. */
+  label: string;
+  /** Whose lock it is (for the agent: the workspace owner it works for). */
+  email: string;
+  since: string;
+}
+
+/** A font face uploaded into a workspace (see docs/AGENT_API.md, "Fonts"). */
+export interface CustomFont {
+  /** Its file name, served at /fonts/<id>. */
+  id: string;
+  /** From the font's own name table, or given at upload. */
+  family: string;
+  /** 100–900. */
+  weight: number;
+  italic: boolean;
+  /** Has a weight axis: PDFs embed its default weight only. */
+  variable: boolean;
+  originalName: string;
+  uploadedAt: string;
 }

@@ -1,14 +1,12 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
-  type FrameLayer,
   type FrameShape,
-  type LineLayer,
-  type RectLayer,
   type ShapeKind,
-  type ShapeLayer,
-  type TextLayer,
-  defaultShadow,
-  defaultStroke,
+  newFrameLayer,
+  newLineLayer,
+  newRectLayer,
+  newShapeLayer,
+  newTextLayer,
 } from "@mycanvas/shared";
 import { api } from "../api";
 import { newLayerId, primarySelectedId, useEditorStore } from "../store/editorStore";
@@ -113,32 +111,7 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
   const transparent = design.background === "transparent";
 
   const addText = (fontFamily = "Inter") => {
-    const layer: TextLayer = {
-      id: newLayerId(),
-      type: "text",
-      name: "Text",
-      x: Math.round(design.width / 2),
-      y: Math.round(design.height / 2),
-      scaleX: 1,
-      scaleY: 1,
-      rotation: 0,
-      opacity: 1,
-      visible: true,
-      text: "Your text here",
-      fontFamily,
-      fontSize: 64,
-      fontStyle: "normal",
-      fill: "#ffffff",
-      align: "left",
-      lineHeight: 1.2,
-      letterSpacing: 0,
-      wrapWidth: 0,
-      curve: 0,
-      effect: { type: "none" },
-      shadow: defaultShadow(),
-      stroke: defaultStroke(),
-    };
-    addLayer(layer);
+    addLayer(newTextLayer(newLayerId(), design, fontFamily));
   };
 
   /** Applies the font to the selected text layer, or adds a new text layer in that font. */
@@ -152,95 +125,19 @@ export function LeftToolbar({ textPropertiesRequest }: { textPropertiesRequest: 
   };
 
   const addRect = () => {
-    const width = Math.round(design.width / 3);
-    const height = Math.round(design.height / 3);
-    const layer: RectLayer = {
-      id: newLayerId(),
-      type: "rect",
-      name: "Rectangle",
-      x: Math.round((design.width - width) / 2),
-      y: Math.round((design.height - height) / 2),
-      scaleX: 1,
-      scaleY: 1,
-      rotation: 0,
-      opacity: 1,
-      visible: true,
-      width,
-      height,
-      fill: "#7c3aed",
-      cornerRadius: 0,
-      stroke: defaultStroke(),
-      shadow: defaultShadow(),
-    };
-    addLayer(layer);
+    addLayer(newRectLayer(newLayerId(), design));
   };
 
   const addLine = () => {
-    const length = Math.round(design.width / 3);
-    const layer: LineLayer = {
-      id: newLayerId(),
-      type: "line",
-      name: "Line",
-      x: Math.round((design.width - length) / 2),
-      y: Math.round(design.height / 2),
-      scaleX: 1,
-      scaleY: 1,
-      rotation: 0,
-      opacity: 1,
-      visible: true,
-      points: [0, 0, length, 0],
-      strokeColor: "#7c3aed",
-      strokeWidth: 4,
-      lineCap: "round",
-      shadow: defaultShadow(),
-    };
-    addLayer(layer);
+    addLayer(newLineLayer(newLayerId(), design));
   };
 
   const addShape = (shape: ShapeKind, name: string) => {
-    const width = Math.round(design.width / 4);
-    const height = Math.round(design.height / 4);
-    const layer: ShapeLayer = {
-      id: newLayerId(),
-      type: "shape",
-      shape,
-      name,
-      x: Math.round((design.width - width) / 2),
-      y: Math.round((design.height - height) / 2),
-      scaleX: 1,
-      scaleY: 1,
-      rotation: 0,
-      opacity: 1,
-      visible: true,
-      width,
-      height,
-      fill: "#7c3aed",
-      stroke: defaultStroke(),
-      shadow: defaultShadow(),
-    };
-    addLayer(layer);
+    addLayer(newShapeLayer(newLayerId(), design, shape, name));
   };
 
   const addFrame = (shape: FrameShape, name: string, cornerRadius: number) => {
-    const width = Math.round(design.width / 3.2);
-    const height = Math.round(design.height / 3.2);
-    const layer: FrameLayer = {
-      id: newLayerId(),
-      type: "frame",
-      shape,
-      name,
-      x: Math.round((design.width - width) / 2),
-      y: Math.round((design.height - height) / 2),
-      scaleX: 1,
-      scaleY: 1,
-      rotation: 0,
-      opacity: 1,
-      visible: true,
-      width,
-      height,
-      cornerRadius,
-    };
-    addLayer(layer);
+    addLayer(newFrameLayer(newLayerId(), design, shape, name, cornerRadius));
   };
 
   const railTabs: { id: RailTab; label: string; icon: ReactNode }[] = [

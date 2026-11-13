@@ -11,15 +11,21 @@ import {
   type ShapeLayer,
   type StrokeEffect,
   type TextLayer,
+  cubicPoints,
+  curveBounds,
+  frameContentBox,
 } from "@mycanvas/shared";
 import { useImage } from "../hooks/useImage";
 import { useEditorStore } from "../store/editorStore";
+import { useCustomFontsVersion } from "../utils/custom-fonts";
 import { ensureFontLoaded } from "../utils/fonts";
 import { roundedPolygonPath, shapePoints } from "../utils/rounded-path";
-import { traceFramePath } from "../utils/frames";
+import { FRAME_CONTENT_NAME, traceFramePath } from "../utils/frames";
 import { TEXT_MAIN_NAME, behindTextOutlineSceneFunc } from "../utils/behind-text";
 import { gradientFillProps } from "../utils/gradients";
 import { imageLookSceneFunc } from "../utils/image-filters";
+import { arcSvgData, curveArc, curveTextPad } from "../utils/pdf-text";
+import { assetUrl } from "../utils/endpoints";
 
 interface LayerNodeProps {
   layer: Layer;
@@ -104,30 +110,6 @@ function useCommonNodeProps(layer: Layer, registerRef: (id: string, node: Konva.
   return { common, setRefs, localRef };
 }
 
-/**
- * SVG arc data for a text layer bent by `curve` (-100…100). W is the measured
- * flat text width; the text rides a circle of radius R = W/Θ with
- * Θ = (|C|/100)·2π. Positive C arches (circle below), negative C smiles
- * (circle above, sweep reversed so the text reads left-to-right).
- */
-function curveArcData(textWidth: number, fontSize: number, curve: number): string {
-  const theta = Math.min(1, Math.abs(curve) / 100) * 2 * Math.PI;
-  const radius = textWidth / theta;
-  const half = theta / 2;
-  const sin = Math.sin(half);
-  const cos = Math.cos(half);
-  const largeArc = theta > Math.PI ? 1 : 0;
-  const cx = textWidth / 2;
-  // Anchor the glyph caps: arch peaks at y≈0, smile starts at y≈0 at the ends.
-  const cy = curve > 0 ? radius + fontSize * 0.8 : fontSize * 0.8 - radius * cos;
-  const startX = cx - radius * sin;
-  const endX = cx + radius * sin;
-  const startY = curve > 0 ? cy - radius * cos : cy + radius * cos;
-  const endY = startY;
-  const sweep = curve > 0 ? 1 : 0;
-  return `M ${String(startX)} ${String(startY)} A ${String(radius)} ${String(radius)} 0 ${String(largeArc)} ${String(sweep)} ${String(endX)} ${String(endY)}`;
-}
-
 const GLITCH_COLORS: Record<string, [string, string]> = {
   "cyan-magenta": ["#00e5ff", "#ff00c8"],
   "red-blue": ["#ff2d2d", "#2d6bff"],
@@ -203,13 +185,16 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
     }
   }, []);
 
+  // Custom fonts can arrive after the text first drew (uploaded meanwhile):
+  // load and redraw again then.
+  const customFontsVersion = useCustomFontsVersion();
   useEffect(() => {
     void ensureFontLoaded(layer.fontFamily, layer.fontStyle).then(() => {
       refreshGlowCache();
       localRef.current?.getLayer()?.batchDraw();
       measureLines();
     });
-  }, [layer.fontFamily, layer.fontStyle, localRef, measureLines, refreshGlowCache]);
+  }, [layer.fontFamily, layer.fontStyle, localRef, measureLines, refreshGlowCache, customFontsVersion]);
 
   useEffect(() => {
     measureLines();
@@ -227,10 +212,12 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
   };
 
   const flatText = curve !== 0 ? layer.text.replace(/\s*\n\s*/g, " ") : layer.text;
-  const arcData =
-    curve !== 0
-      ? curveArcData(Math.max(1, measurePathTextWidth(flatText, layer)), layer.fontSize, curve)
-      : null;
+  const flatWidth = curve !== 0 ? Math.max(1, measurePathTextWidth(flatText, layer)) : 0;
+  const textArc = curve !== 0 ? curveArc(flatWidth, layer.fontSize, curve, curveTextPad(flatWidth, layer.letterSpacing)) : null;
+  // The text path runs a little past the text so Konva keeps the last glyph; the band follows the text itself.
+  const arcData = textArc ? arcSvgData(textArc) : null;
+  const bandArc = curve !== 0 ? curveArc(flatWidth, layer.fontSize, curve) : null;
+  const bandData = bandArc ? arcSvgData(bandArc) : null;
 
   /** The text node itself (TextPath when curved), without the common layer props. */
   const content = (key: string, props: TextContentProps) => {
@@ -342,11 +329,11 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
   } else if (effect.type === "background") {
     const bandWidth = layer.fontSize * layer.lineHeight + effect.spread;
     const cap = effect.roundness >= 50 ? "round" : effect.roundness >= 20 ? "square" : "butt";
-    if (arcData) {
+    if (bandData) {
       children.push(
         <Path
           key="band"
-          data={arcData}
+          data={bandData}
           stroke={effect.color}
           strokeWidth={layer.fontSize + effect.spread}
           lineCap={cap}
@@ -392,7 +379,7 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
 
 function ImageNode({ layer, registerRef }: { layer: ImageLayer } & LayerNodeProps) {
   const { common, setRefs } = useCommonNodeProps(layer, registerRef);
-  const image = useImage(`/assets/${layer.asset}`);
+  const image = useImage(assetUrl(layer.asset));
   const behind = layer.cutout ? layer.behindText : undefined;
   const behindWidth = behind?.width;
   const overlaySceneFunc = useMemo(
@@ -443,21 +430,20 @@ function RectNode({ layer, registerRef }: { layer: RectLayer } & LayerNodeProps)
 
 function LineNode({ layer, registerRef }: { layer: LineLayer } & LayerNodeProps) {
   const { common, setRefs } = useCommonNodeProps(layer, registerRef);
-  const [x1, y1, x2, y2] = layer.points;
-  const left = Math.min(x1, x2);
-  const top = Math.min(y1, y2);
+  const { left, top, right, bottom } = curveBounds(layer.points, layer.control);
   return (
     <Group ref={setRefs} {...common}>
       <Rect
         x={left}
         y={top - 6}
-        width={Math.max(1, Math.abs(x2 - x1))}
-        height={Math.max(12, Math.abs(y2 - y1) + 12)}
+        width={Math.max(1, right - left)}
+        height={Math.max(12, bottom - top + 12)}
         fill="transparent"
         listening={false}
       />
       <Line
-        points={layer.points}
+        points={layer.control ? cubicPoints(layer.points, layer.control) : layer.points}
+        bezier={Boolean(layer.control)}
         stroke={layer.strokeColor}
         strokeWidth={layer.strokeWidth}
         lineCap={layer.lineCap}
@@ -533,8 +519,9 @@ function FrameNode({ layer, registerRef }: { layer: FrameLayer } & LayerNodeProp
   const { common, setRefs, localRef } = useCommonNodeProps(layer, registerRef);
   const editing = useEditorStore((state) => state.editingFrameId === layer.id);
   const content = layer.content;
-  const image = useImage(content ? `/assets/${content.asset}` : undefined);
+  const image = useImage(content ? assetUrl(content.asset) : undefined);
   const radius = layer.cornerRadius ?? 0;
+  const box = frameContentBox(layer);
 
   const setFrameRefs = (node: Konva.Group | null) => {
     setRefs(node);
@@ -596,18 +583,32 @@ function FrameNode({ layer, registerRef }: { layer: FrameLayer } & LayerNodeProp
       <Rect width={layer.width} height={layer.height} fill="rgba(0,0,0,0)" />
       {content && image
         ? (
-            <KonvaImage
-              image={image}
-              x={content.offsetX}
-              y={content.offsetY}
-              scaleX={content.scale}
-              scaleY={content.scale}
-              sceneFunc={imageLookSceneFunc(layer, {
-                x: (layer.width / 2 - content.offsetX) / content.scale,
-                y: (layer.height / 2 - content.offsetY) / content.scale,
-              })}
+            // The photo's own space (frameContentBox): the frame's box, or a
+            // counter-turned box when the photo keeps its angle on the page.
+            <Group
+              name={FRAME_CONTENT_NAME}
+              x={layer.width / 2}
+              y={layer.height / 2}
+              offsetX={box.width / 2}
+              offsetY={box.height / 2}
+              width={box.width}
+              height={box.height}
+              rotation={box.angle}
               listening={false}
-            />
+            >
+              <KonvaImage
+                image={image}
+                x={content.offsetX}
+                y={content.offsetY}
+                scaleX={content.scale}
+                scaleY={content.scale}
+                sceneFunc={imageLookSceneFunc(layer, {
+                  x: (box.width / 2 - content.offsetX) / content.scale,
+                  y: (box.height / 2 - content.offsetY) / content.scale,
+                })}
+                listening={false}
+              />
+            </Group>
           )
         : <FramePlaceholder width={layer.width} height={layer.height} />}
     </Group>

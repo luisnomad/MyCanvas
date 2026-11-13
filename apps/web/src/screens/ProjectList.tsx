@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ASPECT_RATIOS, type DesignSummary, type Folder, PLATFORM_SIZES, type TemplateSummary } from "@mycanvas/shared";
+import { ASPECT_RATIOS, type DesignLock, type DesignSummary, type Folder, PLATFORM_SIZES, type TemplateSummary } from "@mycanvas/shared";
 import { api } from "../api";
 import { Brand } from "../components/Brand";
 import { FolderBar } from "../components/folders/FolderBar";
@@ -14,6 +14,7 @@ import { useUploadFolderView } from "../components/uploads/UploadFolders";
 import { UploadsManager } from "../components/uploads/UploadsManager";
 import { UserBadge } from "../components/UserBadge";
 import { ALL_DESIGNS, DESIGN_DRAG_MIME, type FolderView, folderViewHash, inView } from "../utils/folders";
+import { onLive } from "../utils/live";
 import { relativeEditedTime } from "../utils/relative-time";
 
 const MAX_CANVAS = 8192;
@@ -48,6 +49,8 @@ export function ProjectList({ view }: { view: FolderView }) {
   const [designs, setDesigns] = useState<DesignSummary[] | null>(null);
   const [folders, setFolders] = useState<Folder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Locked designs by id (lock badges, Unlock). */
+  const [locks, setLocks] = useState<Map<string, DesignLock>>(new Map());
   const [showUploads, setShowUploads] = useState(false);
   const [uploadsView, setUploadsView] = useUploadFolderView(null);
   const [showNew, setShowNew] = useState(false);
@@ -72,6 +75,17 @@ export function ProjectList({ view }: { view: FolderView }) {
       });
   }, []);
 
+  const refreshLocks = useCallback(() => {
+    void api
+      .listLocks()
+      .then((list) => { setLocks(new Map(list.map((lock) => [lock.designId, lock]))); })
+      .catch(() => undefined);
+  }, []);
+
+  const unlockDesign = (id: string) => {
+    void api.unlockDesign(id).then(refreshLocks).catch(() => undefined);
+  };
+
   const refreshFolders = useCallback(() => {
     void api
       .listFolders()
@@ -94,7 +108,38 @@ export function ProjectList({ view }: { view: FolderView }) {
     refresh();
     refreshFolders();
     refreshTemplates();
-  }, [refresh, refreshFolders, refreshTemplates]);
+    refreshLocks();
+  }, [refresh, refreshFolders, refreshTemplates, refreshLocks]);
+
+  // Live: designs Claude (or another tab) creates, changes or deletes, and
+  // lock changes, show up without reloading.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = onLive((event) => {
+      if (event.type === "lock.changed") {
+        refreshLocks();
+        return;
+      }
+      if (event.type.startsWith("design.") || event.type === "reconnected") {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        // Several changes in a row: one refresh.
+        timer = setTimeout(() => {
+          refresh();
+          if (event.type === "reconnected") {
+            refreshLocks();
+          }
+        }, 300);
+      }
+    });
+    return () => {
+      unsubscribe();
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [refresh, refreshLocks]);
 
   const currentFolder = view.kind === "folder" ? folders?.find((folder) => folder.id === view.id) : undefined;
   // A link to a folder that no longer exists falls back to all designs.
@@ -403,6 +448,7 @@ export function ProjectList({ view }: { view: FolderView }) {
                 <span className="muted">
                   {`${String(design.width)} × ${String(design.height)}${design.pageCount > 1 ? ` · ${String(design.pageCount)} pages` : ""} · ${relativeEditedTime(design.updatedAt)}`}
                 </span>
+                <CardLock lock={locks.get(design.id)} onUnlock={() => { unlockDesign(design.id); }} />
               </div>
               <div className="design-actions">
                 <button
@@ -614,5 +660,37 @@ export function ProjectList({ view }: { view: FolderView }) {
         />
       )}
     </div>
+  );
+}
+
+/** A design card's lock: "Claude editing", or "Locked by you" with Unlock. */
+function CardLock({ lock, onUnlock }: { lock: DesignLock | undefined; onUnlock: () => void }) {
+  if (!lock) {
+    return null;
+  }
+  if (lock.holder === "agent") {
+    return (
+      <span className="card-lock">
+        <span className="lock-pill agent">
+          <span className="lock-dot" aria-hidden="true" />
+          {`${lock.label} editing`}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="card-lock">
+      <span className="lock-pill mine" title="Claude can't edit this design until you unlock it">Locked by you</span>
+      <button
+        type="button"
+        className="link-button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onUnlock();
+        }}
+      >
+        Unlock
+      </button>
+    </span>
   );
 }

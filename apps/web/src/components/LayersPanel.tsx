@@ -87,6 +87,7 @@ export function LayersPanel() {
   const removeSelectedLayers = useEditorStore((state) => state.removeSelectedLayers);
   const ungroupSelection = useEditorStore((state) => state.ungroupSelection);
   const updateLayer = useEditorStore((state) => state.updateLayer);
+  const updateLayers = useEditorStore((state) => state.updateLayers);
   const removeLayer = useEditorStore((state) => state.removeLayer);
   const duplicateLayer = useEditorStore((state) => state.duplicateLayer);
   const moveLayer = useEditorStore((state) => state.moveLayer);
@@ -137,7 +138,7 @@ export function LayersPanel() {
       items.push({
         kind: "group",
         groupId,
-        label: `Group ${String(groupNumbers.get(groupId) ?? 0)}`,
+        label: members.find((member) => member.groupName)?.groupName ?? `Group ${String(groupNumbers.get(groupId) ?? 0)}`,
         members,
       });
     } else {
@@ -150,6 +151,13 @@ export function LayersPanel() {
     if (trimmed) {
       updateLayer(id, { name: trimmed });
     }
+    setRenamingId(null);
+  };
+
+  /** Group names live on every member; an empty name goes back to "Group N". */
+  const commitGroupRename = (memberIds: string[]) => {
+    const trimmed = draftName.trim().slice(0, 80);
+    updateLayers(memberIds.map((id) => ({ id, patch: { groupName: trimmed === "" ? undefined : trimmed } })));
     setRenamingId(null);
   };
 
@@ -252,6 +260,9 @@ export function LayersPanel() {
         ? (
             <input
               className="layer-rename"
+              onFocus={(e) => {
+                e.target.select();
+              }}
               value={draftName}
               autoFocus
               onChange={(e) => {
@@ -383,7 +394,46 @@ export function LayersPanel() {
                 </button>
                 <span className="layer-type">Grp</span>
                 <LinkIcon />
-                <span className="layer-name">{item.label}</span>
+                {renamingId === `group:${item.groupId}`
+                  ? (
+                      <input
+                        className="layer-rename"
+                        onFocus={(e) => {
+                          e.target.select();
+                        }}
+                        value={draftName}
+                        autoFocus
+                        onChange={(e) => {
+                          setDraftName(e.target.value);
+                        }}
+                        onBlur={() => {
+                          commitGroupRename(memberIds);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            commitGroupRename(memberIds);
+                          } else if (e.key === "Escape") {
+                            setRenamingId(null);
+                          }
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                        }}
+                      />
+                    )
+                  : (
+                      <span
+                        className="layer-name"
+                        title="Double-click to rename the group"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setDraftName(item.members.find((member) => member.groupName)?.groupName ?? "");
+                          setRenamingId(`group:${item.groupId}`);
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                    )}
                 <span className="layer-actions">
                   <button
                     type="button"

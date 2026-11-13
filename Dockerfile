@@ -23,6 +23,11 @@ COPY apps/server/package.json apps/server/
 COPY packages/shared/package.json packages/shared/
 RUN npm ci --omit=dev --workspace @mycanvas/server --no-audit --no-fund \
     && npm cache clean --force
+# Headless Chromium for the agent API's renderer (docs/AGENT_API.md): the
+# version playwright-core expects, plus its system libraries and fonts.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN node_modules/.bin/playwright-core install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/*
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY apps/server/src apps/server/src
