@@ -24,6 +24,7 @@ import { FRAME_CONTENT_NAME, traceFramePath } from "../utils/frames";
 import { TEXT_MAIN_NAME, behindTextOutlineSceneFunc } from "../utils/behind-text";
 import { gradientFillProps } from "../utils/gradients";
 import { imageLookSceneFunc } from "../utils/image-filters";
+import { arcSvgData, curveArc, curveTextPad } from "../utils/pdf-text";
 
 interface LayerNodeProps {
   layer: Layer;
@@ -106,30 +107,6 @@ function useCommonNodeProps(layer: Layer, registerRef: (id: string, node: Konva.
   };
 
   return { common, setRefs, localRef };
-}
-
-/**
- * SVG arc data for a text layer bent by `curve` (-100…100). W is the measured
- * flat text width; the text rides a circle of radius R = W/Θ with
- * Θ = (|C|/100)·2π. Positive C arches (circle below), negative C smiles
- * (circle above, sweep reversed so the text reads left-to-right).
- */
-function curveArcData(textWidth: number, fontSize: number, curve: number): string {
-  const theta = Math.min(1, Math.abs(curve) / 100) * 2 * Math.PI;
-  const radius = textWidth / theta;
-  const half = theta / 2;
-  const sin = Math.sin(half);
-  const cos = Math.cos(half);
-  const largeArc = theta > Math.PI ? 1 : 0;
-  const cx = textWidth / 2;
-  // Anchor the glyph caps: arch peaks at y≈0, smile starts at y≈0 at the ends.
-  const cy = curve > 0 ? radius + fontSize * 0.8 : fontSize * 0.8 - radius * cos;
-  const startX = cx - radius * sin;
-  const endX = cx + radius * sin;
-  const startY = curve > 0 ? cy - radius * cos : cy + radius * cos;
-  const endY = startY;
-  const sweep = curve > 0 ? 1 : 0;
-  return `M ${String(startX)} ${String(startY)} A ${String(radius)} ${String(radius)} 0 ${String(largeArc)} ${String(sweep)} ${String(endX)} ${String(endY)}`;
 }
 
 const GLITCH_COLORS: Record<string, [string, string]> = {
@@ -234,10 +211,12 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
   };
 
   const flatText = curve !== 0 ? layer.text.replace(/\s*\n\s*/g, " ") : layer.text;
-  const arcData =
-    curve !== 0
-      ? curveArcData(Math.max(1, measurePathTextWidth(flatText, layer)), layer.fontSize, curve)
-      : null;
+  const flatWidth = curve !== 0 ? Math.max(1, measurePathTextWidth(flatText, layer)) : 0;
+  const textArc = curve !== 0 ? curveArc(flatWidth, layer.fontSize, curve, curveTextPad(flatWidth, layer.letterSpacing)) : null;
+  // The text path runs a little past the text so Konva keeps the last glyph; the band follows the text itself.
+  const arcData = textArc ? arcSvgData(textArc) : null;
+  const bandArc = curve !== 0 ? curveArc(flatWidth, layer.fontSize, curve) : null;
+  const bandData = bandArc ? arcSvgData(bandArc) : null;
 
   /** The text node itself (TextPath when curved), without the common layer props. */
   const content = (key: string, props: TextContentProps) => {
@@ -349,11 +328,11 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
   } else if (effect.type === "background") {
     const bandWidth = layer.fontSize * layer.lineHeight + effect.spread;
     const cap = effect.roundness >= 50 ? "round" : effect.roundness >= 20 ? "square" : "butt";
-    if (arcData) {
+    if (bandData) {
       children.push(
         <Path
           key="band"
-          data={arcData}
+          data={bandData}
           stroke={effect.color}
           strokeWidth={layer.fontSize + effect.spread}
           lineCap={cap}

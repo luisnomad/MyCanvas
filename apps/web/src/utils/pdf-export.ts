@@ -50,7 +50,7 @@ import { getContentLayer, getLayerNode } from "./canvas-bridge";
 import { ensureFontsLoaded, isGoogleFont } from "./fonts";
 import { cssFilterFor, hasAdjustments } from "./image-filters";
 import { type PictureKind, type PicturePlacement, type Rect, flipMatrix, framePlacement, fullPictureRect, imagePlacement, jpegExifOrientation, pictureMatrix, sniffPicture } from "./pdf-picture";
-import { type Band, arcPath, curveArc, curvedGlyphs, effectOffset, straightBands, textFallbackReason } from "./pdf-text";
+import { type Band, arcPath, curveArc, curveTextPad, curvedGlyphs, effectOffset, straightBands, textFallbackReason } from "./pdf-text";
 import { type PathCommand, type Rgba, type ShadingSpec, type VectorShape, type VectorStroke, backgroundShape, layerMatrix, parseCssColor, pathBounds, pdfLayerMatrix, shadowVisible, vectorShapeForLayer } from "./pdf-vector";
 import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
 
@@ -541,7 +541,7 @@ function drawTextLayer(pdf: PDFDocument, page: PDFPage, slice: Extract<Slice, { 
     const text = node.text();
     const chars = [...text].map((char) => ({ text: char, width: measureText(node, char).width }));
     const textWidth = chars.reduce((total, char) => total + char.width, 0) + Math.max(0, chars.length - 1) * letterSpacing;
-    const arc = curveArc(textWidth, fontSize, layer.curve ?? 0);
+    const arc = curveArc(textWidth, fontSize, layer.curve ?? 0, curveTextPad(textWidth, letterSpacing));
     if (arc) {
       placements.push(...curvedGlyphs(chars, measureText(node, text).width, letterSpacing, arc));
     }

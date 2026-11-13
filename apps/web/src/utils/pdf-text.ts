@@ -5,7 +5,7 @@ import { type PathCommand, arcCommands, parseCssColor } from "./pdf-vector";
  * Text geometry for PDF export (pure: no Konva, no pdf-lib).
  *
  * Curved text in the editor is a Konva.TextPath riding the arc that
- * LayerNode's curveArcData builds; this module rebuilds that arc and
+ * curveArc builds (LayerNode draws the same arc); this module also
  * places glyphs the way Konva.TextPath._setTextData does (its 1°-chord
  * path length included, so the same glyphs survive at the path end).
  * The straight-text background bands and the echo/glitch offsets come
@@ -21,24 +21,49 @@ export interface CurveArc {
   sweep: number;
 }
 
+/** The longest arc a curve may take: a full circle would start and end on the same point, which SVG can't draw. */
+const MAX_CURVE_SWEEP = 2 * Math.PI - (4 * Math.PI) / 180;
+const MAX_TEXT_SWEEP = 2 * Math.PI - Math.PI / 180;
+
 /**
- * The arc of curveArcData: W is the flat text width, the text rides a
- * circle of radius W/Θ with Θ = (|curve|/100)·2π. Positive curves arch
- * (circle below the text), negative ones smile (circle above, read
- * left-to-right so the sweep is reversed). Null for straight text.
+ * Room added past the end of a curved text's path: Konva.TextPath drops a
+ * last glyph that overruns the path, and the measured width leaves no slack
+ * for the trailing letter spacing or its 1°-chord path length.
  */
-export function curveArc(textWidth: number, fontSize: number, curve: number): CurveArc | null {
+export function curveTextPad(textWidth: number, letterSpacing: number): number {
+  return Math.max(0, letterSpacing) + 2 + textWidth * 0.002;
+}
+
+/**
+ * The arc a curved text rides: W is the flat text width, the text rides a
+ * circle of radius W/Θ with Θ = (|curve|/100)·2π (at most just under a full
+ * circle). Positive curves arch (circle below the text), negative ones smile
+ * (circle above, read left-to-right so the sweep is reversed). `pad` px
+ * extend the end only, so the text keeps its place (see curveTextPad).
+ * Null for straight text.
+ */
+export function curveArc(textWidth: number, fontSize: number, curve: number, pad = 0): CurveArc | null {
   if (curve === 0 || !(textWidth > 0)) {
     return null;
   }
-  const theta = Math.min(1, Math.abs(curve) / 100) * 2 * Math.PI;
+  const theta = Math.min(Math.min(1, Math.abs(curve) / 100) * 2 * Math.PI, MAX_CURVE_SWEEP);
   const radius = textWidth / theta;
   const half = theta / 2;
+  const sweep = Math.min(theta + Math.max(0, pad) / radius, MAX_TEXT_SWEEP);
   const cx = textWidth / 2;
   const cy = curve > 0 ? radius + fontSize * 0.8 : fontSize * 0.8 - radius * Math.cos(half);
   return curve > 0
-    ? { cx, cy, radius, startAngle: -Math.PI / 2 - half, sweep: theta }
-    : { cx, cy, radius, startAngle: Math.PI / 2 + half, sweep: -theta };
+    ? { cx, cy, radius, startAngle: -Math.PI / 2 - half, sweep }
+    : { cx, cy, radius, startAngle: Math.PI / 2 + half, sweep: -sweep };
+}
+
+/** The arc as SVG path data (one A command), for Konva's TextPath and Path. */
+export function arcSvgData(arc: CurveArc): string {
+  const start = arcPoint(arc, arc.startAngle);
+  const end = arcPoint(arc, arc.startAngle + arc.sweep);
+  const largeArc = Math.abs(arc.sweep) > Math.PI ? 1 : 0;
+  const sweepFlag = arc.sweep > 0 ? 1 : 0;
+  return `M ${String(start.x)} ${String(start.y)} A ${String(arc.radius)} ${String(arc.radius)} 0 ${String(largeArc)} ${String(sweepFlag)} ${String(end.x)} ${String(end.y)}`;
 }
 
 export function arcPoint(arc: CurveArc, angle: number): { x: number; y: number } {
@@ -181,11 +206,6 @@ export function textFallbackReason(layer: TextLayer): string | null {
   const fill = parseCssColor(layer.fill);
   if (!fill) {
     return "fill color";
-  }
-  if (Math.abs(layer.curve ?? 0) >= 100) {
-    // A full circle is a degenerate SVG arc in the editor (start = end): it draws
-    // only stray glyphs there, so the picture is the faithful export.
-    return "full circle";
   }
   const effect = layer.effect ?? { type: "none" as const };
   switch (effect.type) {

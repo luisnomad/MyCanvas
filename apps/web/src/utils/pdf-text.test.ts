@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arcPath, arcPoint, arcPointAtLength, bandCap, curveArc, curvedGlyphs, effectOffset, konvaArcLength, straightBands, textFallbackReason } from "./pdf-text";
+import { arcPath, arcPoint, arcPointAtLength, arcSvgData, bandCap, curveArc, curveTextPad, curvedGlyphs, effectOffset, konvaArcLength, straightBands, textFallbackReason } from "./pdf-text";
 import { pathBounds } from "./pdf-vector";
 
 describe("curveArc", () => {
@@ -36,11 +36,28 @@ describe("curveArc", () => {
   });
 
   it("measures length with 1° chords, just under the true arc", () => {
-    const arc = curveArc(628.318, 20, 100); // full circle, radius 100
+    const arc = curveArc(314.159, 20, 50); // half circle, radius 100
     const length = arc ? konvaArcLength(arc) : 0;
-    expect(length).toBeLessThan(628.318);
-    expect(length).toBeGreaterThan(628.3);
+    expect(length).toBeLessThan(314.159);
+    expect(length).toBeGreaterThan(314.1);
     expect(arc && arcPointAtLength(arc, length / 2, length).x).toBeCloseTo(arc?.cx ?? 0, 1);
+  });
+
+  it("stops just short of a full circle at curve 100, so the arc has two ends", () => {
+    const arc = curveArc(600, 20, 100);
+    expect(Math.abs(arc?.sweep ?? 0)).toBeLessThan(2 * Math.PI);
+    const start = arc ? arcPoint(arc, arc.startAngle) : { x: 0, y: 0 };
+    const end = arc ? arcPoint(arc, arc.startAngle + arc.sweep) : { x: 0, y: 0 };
+    expect(Math.hypot(end.x - start.x, end.y - start.y)).toBeGreaterThan(5);
+    expect(arcSvgData(arc ?? { cx: 0, cy: 0, radius: 1, startAngle: 0, sweep: 1 })).toMatch(/ A [\d.]+ [\d.]+ 0 1 1 /);
+  });
+
+  it("pads only the end: the text keeps its start and its circle", () => {
+    const plain = curveArc(300, 20, 40);
+    const padded = curveArc(300, 20, 40, curveTextPad(300, 3));
+    expect(padded?.startAngle).toBe(plain?.startAngle);
+    expect(padded?.radius).toBe(plain?.radius);
+    expect((padded?.sweep ?? 0) * (padded?.radius ?? 0) - (plain?.sweep ?? 0) * (plain?.radius ?? 0)).toBeCloseTo(3 + 2 + 0.6);
   });
 });
 
@@ -67,13 +84,15 @@ describe("curvedGlyphs", () => {
     }
   });
 
-  it("keeps the last glyph through the kerning slack, drops it beyond", () => {
+  it("drops the last glyph on an unpadded path, keeps it with the text pad", () => {
     // Full width equal to the sum: no slack; the 1° chords make the path a hair short.
     expect(curvedGlyphs(chars, 300, 0, arc)).toHaveLength(9);
-    // A kerned string measures narrower than its characters: slack covers the shortfall.
-    expect(curvedGlyphs(chars, 299, 0, arc)).toHaveLength(10);
     // Letter spacing pushes the last end past the path by more than the slack.
     expect(curvedGlyphs(chars, 299, 2, curveArc(300 + 9 * 2, 20, 50) ?? arc)).toHaveLength(9);
+    // The editor and the PDF pad the path's end: every glyph stays.
+    expect(curvedGlyphs(chars, 300, 0, curveArc(300, 20, 50, curveTextPad(300, 0)) ?? arc)).toHaveLength(10);
+    expect(curvedGlyphs(chars, 299, 2, curveArc(318, 20, 50, curveTextPad(318, 2)) ?? arc)).toHaveLength(10);
+    expect(curvedGlyphs(chars, 300, 0, curveArc(300, 20, 100, curveTextPad(300, 0)) ?? arc)).toHaveLength(10);
   });
 
   it("drops glyphs that start past the path", () => {
@@ -126,6 +145,6 @@ describe("textFallbackReason", () => {
     expect(textFallbackReason({ ...base, effect: { type: "glow", color: "#ff0", spread: 10, strength: 50 } })).toBeNull();
     expect(textFallbackReason({ ...base, effect: { type: "shadow", color: "#000", distance: 5, angle: 45, blur: 8, opacity: 0.5 } })).toBeNull();
     expect(textFallbackReason({ ...base, fill: "hsl(1,1%,1%)" })).toBe("fill color");
-    expect(textFallbackReason({ ...base, curve: 100 })).toBe("full circle");
+    expect(textFallbackReason({ ...base, curve: 100 })).toBeNull();
   });
 });
