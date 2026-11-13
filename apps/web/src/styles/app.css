@@ -1219,6 +1219,19 @@ input.color-hex:focus {
   letter-spacing: 0.2em;
 }
 
+.share-pin-row select {
+  width: auto;
+  flex: none;
+}
+
+.share-expired span {
+  color: var(--danger, #f87171);
+}
+
+.share-viewed {
+  margin-top: 8px;
+}
+
 .share-actions-spacer {
   flex: 1;
 }

@@ -12,7 +12,7 @@ import { onLive } from "../utils/live";
  * real design, not a render) and follows changes live.
  */
 
-type Status = "loading" | "pin" | "ready" | "gone" | "error";
+type Status = "loading" | "pin" | "ready" | "gone" | "expired" | "error";
 
 export function SharedView({ token }: { token: string }) {
   const base = `/s/${token}`;
@@ -39,6 +39,8 @@ export function SharedView({ token }: { token: string }) {
         setStatus("pin");
       } else if (res.status === 404) {
         setStatus("gone");
+      } else if (res.status === 410) {
+        setStatus("expired");
       } else if (!res.ok) {
         setStatus("error");
       } else {
@@ -120,6 +122,10 @@ export function SharedView({ token }: { token: string }) {
         await refresh();
         return;
       }
+      if (res.status === 410) {
+        setStatus("expired");
+        return;
+      }
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       setPinError(body.error ?? "That PIN isn't right");
     } catch {
@@ -162,15 +168,17 @@ export function SharedView({ token }: { token: string }) {
     );
   }
 
-  if (status === "gone" || status === "error" || status === "loading" || !design) {
+  if (status === "gone" || status === "expired" || status === "error" || status === "loading" || !design) {
     return (
       <div className="shared-view shared-message">
         <p>
           {status === "gone"
             ? "This design isn't shared any more."
-            : status === "error"
-              ? "The design couldn't be loaded. Check your connection and reload the page."
-              : "Loading…"}
+            : status === "expired"
+              ? "This link has expired. Ask the person who shared it for a new one."
+              : status === "error"
+                ? "The design couldn't be loaded. Check your connection and reload the page."
+                : "Loading…"}
         </p>
       </div>
     );

@@ -166,6 +166,35 @@ describe("share links", () => {
     expect((await app.request(`${base}/design`, request({ as: "public" }))).status).toBe(404);
   });
 
+  it("expires links, can extend them, and tells the editor when the link was last viewed", async () => {
+    const { design } = await newDesign();
+    const shared = (await share(design.id, { expiresInDays: 7 })).share as unknown as { path: string; expiresAt: string; expired: boolean; lastViewedAt: string | null };
+    expect(Date.parse(shared.expiresAt) - Date.now()).toBeGreaterThan(6.9 * 24 * 3600_000);
+    expect(shared.expired).toBe(false);
+    expect(shared.lastViewedAt).toBeNull();
+    expect((await app.request(`/api/designs/${design.id}/share`, request({ method: "PUT", json: { expiresInDays: 3 } }))).status).toBe(400);
+
+    expect((await app.request(`${shared.path}/design`, request({ as: "public" }))).status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const seen = (await (await app.request(`/api/designs/${design.id}/share`, request())).json()) as { share: { lastViewedAt: string | null } };
+    expect(seen.share.lastViewedAt).not.toBeNull();
+
+    // Out of date: the link answers 410 everywhere, but the editor still sees it.
+    const { saveShare } = await import("./shares");
+    const record = await saveShare(OWNER, design.id, {});
+    record.expiresAt = new Date(Date.now() - 1000).toISOString();
+    const expired = await app.request(`${shared.path}/design`, request({ as: "public" }));
+    expect(expired.status).toBe(410);
+    expect(await expired.json()).toMatchObject({ expired: true });
+    expect((await app.request(`${shared.path}/unlock`, request({ method: "POST", as: "public", json: { pin: "1234" } }))).status).toBe(410);
+    const info = (await (await app.request(`/api/designs/${design.id}/share`, request())).json()) as { share: { expired: boolean } };
+    expect(info.share.expired).toBe(true);
+
+    // Extending it (or "never") opens the same link again.
+    expect((await share(design.id, { expiresInDays: null })).share).toMatchObject({ path: shared.path, expiresAt: null, expired: false });
+    expect((await app.request(`${shared.path}/design`, request({ as: "public" }))).status).toBe(200);
+  });
+
   it("serves fonts CSS that points inside the link", async () => {
     const { design } = await newDesign();
     const base = (await share(design.id)).share?.path ?? "";
