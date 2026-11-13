@@ -32,6 +32,8 @@ export interface VectorStroke {
   color: Rgba;
   width: number;
   cap: "butt" | "round" | "square";
+  /** Default miter, as canvas. */
+  join?: "miter" | "round" | "bevel";
 }
 
 /** A gradient as a PDF shading, in the shape's local space (y down). */
@@ -147,7 +149,7 @@ export function parseCssColor(input: string): Rgba | null {
 }
 
 /** Cubic Bézier segments for a circular arc (≤ 90° each), clockwise in y-down space when a1 > a0. */
-function arcCommands(cx: number, cy: number, r: number, a0: number, a1: number): PathCommand[] {
+export function arcCommands(cx: number, cy: number, r: number, a0: number, a1: number): PathCommand[] {
   const commands: PathCommand[] = [];
   const segments = Math.max(1, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 2) - 1e-9));
   const step = (a1 - a0) / segments;

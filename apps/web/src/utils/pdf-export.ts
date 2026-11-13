@@ -10,9 +10,17 @@ import {
   PDFDict,
   PDFDocument,
   PDFName,
+  PDFNumber,
   PDFOperator,
   PDFOperatorNames,
   type PDFRef,
+  TextRenderingMode,
+  beginText,
+  endText,
+  setFontAndSize,
+  setTextMatrix,
+  setTextRenderingMode,
+  showText,
   appendBezierCurve,
   clip,
   closePath,
@@ -25,7 +33,6 @@ import {
   moveTo,
   popGraphicsState,
   pushGraphicsState,
-  rgb,
   setCharacterSpacing,
   setFillingRgbColor,
   setGraphicsState,
@@ -42,16 +49,19 @@ import { getContentLayer, getLayerNode } from "./canvas-bridge";
 import { ensureFontsLoaded, isGoogleFont } from "./fonts";
 import { cssFilterFor, hasAdjustments } from "./image-filters";
 import { type PictureKind, type PicturePlacement, type Rect, flipMatrix, framePlacement, fullPictureRect, imagePlacement, jpegExifOrientation, pictureMatrix, sniffPicture } from "./pdf-picture";
-import { type PathCommand, type Rgba, type ShadingSpec, type VectorShape, backgroundShape, pathBounds, pdfLayerMatrix, shadowVisible, vectorShapeForLayer } from "./pdf-vector";
+import { type Band, arcPath, curveArc, curvedGlyphs, effectOffset, straightBands, textFallbackReason } from "./pdf-text";
+import { type PathCommand, type Rgba, type ShadingSpec, type VectorShape, type VectorStroke, backgroundShape, layerMatrix, parseCssColor, pathBounds, pdfLayerMatrix, shadowVisible, vectorShapeForLayer } from "./pdf-vector";
 import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
 
 /**
  * Multi-page PDF export with real text.
  *
  * Each page becomes a stack of slices in z-order:
- * - plain text layers (no effect, not curved) are drawn as PDF text with
- *   the font embedded (subset), at the exact baselines Konva uses — crisp,
- *   searchable and copyable;
+ * - text layers are drawn as PDF text with the font embedded (subset), at
+ *   the exact baselines Konva uses — crisp, searchable and copyable; the
+ *   outline, echo, glitch and background effects are extra passes or
+ *   shapes under the text, and curved text places each glyph along the
+ *   editor's arc (see pdf-text.ts);
  * - rects, shapes and lines without a shadow are drawn as PDF paths from
  *   the design model (see pdf-vector.ts), with the geometry the editor
  *   draws; gradients are native axial/radial shadings, as is a gradient
@@ -77,7 +87,7 @@ export interface PdfExportOptions {
 
 type Slice =
   | { kind: "raster"; nodes: Konva.Node[]; withBackground: boolean }
-  | { kind: "text"; layer: TextLayer; node: Konva.Text }
+  | { kind: "text"; layer: TextLayer; node: TextNode }
   | { kind: "vector"; shape: VectorShape }
   | { kind: "picture"; placement: PicturePlacement; image: HTMLImageElement; asset: string; adjust?: ImageAdjustments; node: Konva.Node };
 
@@ -256,10 +266,26 @@ function nextFrame(): Promise<void> {
   });
 }
 
-function hexToRgb(hex: string) {
-  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  const value = match?.[1] ? parseInt(match[1], 16) : 0;
-  return rgb(((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255);
+type TextNode = Konva.Text | Konva.TextPath;
+
+let measureCanvas: HTMLCanvasElement | null = null;
+
+/** Konva's own measurement of `text` in the node's font (width, and the font's box for the "middle" baseline). */
+function measureText(node: TextNode, text: string): { width: number; ascent: number; descent: number } {
+  const fontSize = node.fontSize();
+  measureCanvas ??= document.createElement("canvas");
+  const ctx = measureCanvas.getContext("2d");
+  if (!ctx) {
+    return { width: 0, ascent: fontSize * 0.8, descent: fontSize * 0.2 };
+  }
+  ctx.font = (node as unknown as { _getContextFont: () => string })._getContextFont();
+  const metrics = ctx.measureText(text);
+  const box = metrics as { fontBoundingBoxAscent?: number; fontBoundingBoxDescent?: number; actualBoundingBoxAscent?: number; actualBoundingBoxDescent?: number };
+  return {
+    width: metrics.width,
+    ascent: box.fontBoundingBoxAscent ?? box.actualBoundingBoxAscent ?? fontSize * 0.8,
+    descent: box.fontBoundingBoxDescent ?? box.actualBoundingBoxDescent ?? fontSize * 0.2,
+  };
 }
 
 /** Waits until every image on the open page has loaded and fonts are ready. */
@@ -419,52 +445,174 @@ function layoutLine(font: PDFFont, text: string, fontSize: number, letterSpacing
   return { runs: runs.filter((entry) => entry.text !== ""), width: x };
 }
 
-/** Text drawn as real PDF text, line by line, at Konva's own baselines. */
-function drawText(page: PDFPage, slice: Extract<Slice, { kind: "text" }>, font: PDFFont, designHeight: number) {
+/** One paint of the text: fill, optional stroke, offset in text-local px. */
+interface TextPaint {
+  fill: Rgba;
+  stroke?: { color: Rgba; width: number; miterLimit: number };
+  dx: number;
+  dy: number;
+}
+
+const fontKeys = new WeakMap<PDFPage, Map<PDFFont, PDFName>>();
+
+/** The font's resource name on `page` (registered once per page). */
+function fontKey(page: PDFPage, font: PDFFont): PDFName {
+  let keys = fontKeys.get(page);
+  if (!keys) {
+    keys = new Map();
+    fontKeys.set(page, keys);
+  }
+  let key = keys.get(font);
+  if (!key) {
+    key = page.node.newFontDictionary(font.name, font.ref);
+    keys.set(font, key);
+  }
+  return key;
+}
+
+const GLITCH_COLORS: Record<string, [string, string]> = {
+  "cyan-magenta": ["#00e5ff", "#ff00c8"],
+  "red-blue": ["#ff2d2d", "#2d6bff"],
+};
+
+/**
+ * A text layer as real PDF text: the effect passes LayerNode stacks
+ * (outline copy, echo copies, glitch copies, background bands) and then
+ * the text itself, each at Konva's own glyph positions.
+ */
+function drawTextLayer(pdf: PDFDocument, page: PDFPage, slice: Extract<Slice, { kind: "text" }>, font: PDFFont, designHeight: number) {
   const { layer, node } = slice;
+  const fill = parseCssColor(layer.fill);
+  if (!fill) {
+    return;
+  }
+  const effect = layer.effect ?? { type: "none" as const };
+  const curved = node instanceof Konva.TextPath;
+  // Konva.Text strokes with miter limit 2; TextPath keeps the canvas default.
+  const miterLimit = curved ? 10 : 2;
+  const { dx, dy } = effectOffset(effect);
+  const passes: TextPaint[] = [];
+  const main: TextPaint = { fill, dx: 0, dy: 0 };
+  if (effect.type === "outline") {
+    const color = parseCssColor(effect.color) ?? fill;
+    // Stroke-only copy at 2x thickness under the fill copy, as the editor draws it.
+    passes.push({ fill: color, stroke: { color, width: effect.thickness * 2, miterLimit }, dx: 0, dy: 0 });
+  } else if (effect.type === "echo") {
+    const color = parseCssColor(effect.color) ?? fill;
+    passes.push({ fill: color, dx: dx * 2, dy: dy * 2 }, { fill: color, dx, dy });
+  } else if (effect.type === "glitch") {
+    const [a, b] = GLITCH_COLORS[effect.colorPair] ?? GLITCH_COLORS["cyan-magenta"] ?? ["#00e5ff", "#ff00c8"];
+    passes.push({ fill: parseCssColor(a) ?? fill, dx, dy }, { fill: parseCssColor(b) ?? fill, dx: -dx, dy: -dy });
+  }
+  passes.push(main);
+
   const fontSize = node.fontSize();
-  const lineHeightPx = node.lineHeight() * fontSize;
-  const padding = node.padding();
-  const totalWidth = node.width();
   const letterSpacing = node.letterSpacing();
-  // Same baseline math as Konva.Text (non-legacy rendering).
-  const measured: unknown = node.measureSize("M");
-  const metrics = measured as { fontBoundingBoxAscent?: number; fontBoundingBoxDescent?: number; actualBoundingBoxAscent?: number; actualBoundingBoxDescent?: number };
-  const ascent = metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent ?? fontSize * 0.8;
-  const descent = metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent ?? fontSize * 0.2;
-  const firstBaseline = (ascent - descent) / 2 + lineHeightPx / 2;
-  const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = node.getAbsoluteTransform().getMatrix();
-  const k = POINTS_PER_PX;
-  const color = hexToRgb(layer.fill);
+  const box = measureText(node, "M");
+  // Konva draws with textBaseline "middle": the baseline sits this far below the line/path point.
+  const middleToBaseline = (box.ascent - box.descent) / 2;
   // The text node sits inside the layer's group, which carries layer opacity.
   const opacity = node.opacity() * (node.getParent()?.opacity() ?? 1);
+  const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = node.getAbsoluteTransform().getMatrix();
+  const k = POINTS_PER_PX;
 
-  page.pushOperators(
-    pushGraphicsState(),
-    // Text-local (x right, y down) → PDF (y up), in points.
-    concatTransformationMatrix(k * a, -k * b, -k * c, k * d, k * e, k * (designHeight - f)),
-    setCharacterSpacing(letterSpacing),
-  );
-  node.textArr.forEach((line, index) => {
-    const text = line.text.replace(/\s+$/, "");
-    if (!text) {
-      return;
+  // Glyph placements in text-local space (y down): origin on the line/path, rotation along it.
+  const placements: { text: string; x: number; y: number; rotation: number }[] = [];
+  if (curved) {
+    const text = node.text();
+    const chars = [...text].map((char) => ({ text: char, width: measureText(node, char).width }));
+    const textWidth = chars.reduce((total, char) => total + char.width, 0) + Math.max(0, chars.length - 1) * letterSpacing;
+    const arc = curveArc(textWidth, fontSize, layer.curve ?? 0);
+    if (arc) {
+      placements.push(...curvedGlyphs(chars, measureText(node, text).width, letterSpacing, arc));
     }
-    const { runs, width: pdfWidth } = layoutLine(font, text, fontSize, letterSpacing);
-    // Align by the embedded font's own width so centers/right edges stay put.
-    const lineLeft = padding;
-    const available = totalWidth - padding * 2;
-    const x = layer.align === "center"
-      ? lineLeft + (available - pdfWidth) / 2
-      : layer.align === "right"
-        ? lineLeft + available - pdfWidth
-        : lineLeft;
-    const baseline = padding + firstBaseline + index * lineHeightPx;
-    for (const run of runs) {
-      page.drawText(run.text, { x: x + run.x, y: -baseline, size: fontSize, font, color, opacity });
+  } else {
+    const lineHeightPx = node.lineHeight() * fontSize;
+    const padding = node.padding();
+    const totalWidth = node.width();
+    const firstBaseline = middleToBaseline + lineHeightPx / 2;
+    node.textArr.forEach((line, index) => {
+      const text = line.text.replace(/\s+$/, "");
+      if (!text) {
+        return;
+      }
+      const { runs, width: pdfWidth } = layoutLine(font, text, fontSize, letterSpacing);
+      // Align by the embedded font's own width so centers/right edges stay put.
+      const available = totalWidth - padding * 2;
+      const x = layer.align === "center" ? padding + (available - pdfWidth) / 2 : layer.align === "right" ? padding + available - pdfWidth : padding;
+      const baseline = padding + firstBaseline + index * lineHeightPx;
+      for (const run of runs) {
+        // Straight runs carry their own baseline offset: rotation 0, origin on the baseline.
+        placements.push({ text: run.text, x: x + run.x, y: baseline - middleToBaseline, rotation: 0 });
+      }
+    });
+  }
+
+  // Background bands go under everything, in the layer group's space.
+  if (effect.type === "background") {
+    const color = parseCssColor(effect.color);
+    if (color) {
+      const bandOpacity = Math.min(1, Math.max(0, effect.opacity)) * opacity;
+      const stroke = (width: number, cap: VectorStroke["cap"], join: VectorStroke["join"]): VectorStroke => ({ color, width, cap, join });
+      const matrix = layerMatrix(layer);
+      const shapes: VectorShape[] = [];
+      if (curved) {
+        const text = node.text();
+        const chars = [...text].map((char) => measureText(node, char).width);
+        const textWidth = chars.reduce((total, width) => total + width, 0) + Math.max(0, chars.length - 1) * letterSpacing;
+        const arc = curveArc(textWidth, fontSize, layer.curve ?? 0);
+        if (arc) {
+          const cap = effect.roundness >= 50 ? "round" : effect.roundness >= 20 ? "square" : "butt";
+          shapes.push({ matrix, path: arcPath(arc), fill: null, stroke: stroke(fontSize + effect.spread, cap, effect.roundness >= 50 ? "round" : "miter"), opacity: bandOpacity, group: false });
+        }
+      } else {
+        const bands: Band[] = straightBands(node.textArr.map((line) => line.width), layer, effect);
+        for (const band of bands) {
+          shapes.push({ matrix, path: [{ op: "M", x: band.x0, y: band.y }, { op: "L", x: band.x1, y: band.y }], fill: null, stroke: stroke(band.width, band.cap, "miter"), opacity: bandOpacity, group: false });
+        }
+      }
+      for (const shape of shapes) {
+        drawVector(pdf, page, shape, designHeight);
+      }
     }
-  });
-  page.pushOperators(popGraphicsState());
+  }
+
+  const key = fontKey(page, font);
+  for (const pass of passes) {
+    const ops: PDFOperator[] = [
+      pushGraphicsState(),
+      // Text-local (x right, y down) → PDF (y up), in points.
+      concatTransformationMatrix(k * a, -k * b, -k * c, k * d, k * e, k * (designHeight - f)),
+    ];
+    const state = alphaState(pdf, page, pass.fill.a * opacity, (pass.stroke?.color.a ?? 1) * opacity);
+    if (state) {
+      ops.push(setGraphicsState(state));
+    }
+    ops.push(beginText(), setFontAndSize(key, fontSize), setCharacterSpacing(curved ? 0 : letterSpacing));
+    ops.push(setFillingRgbColor(pass.fill.r, pass.fill.g, pass.fill.b));
+    if (pass.stroke) {
+      ops.push(
+        setTextRenderingMode(TextRenderingMode.FillAndOutline),
+        setStrokingRgbColor(pass.stroke.color.r, pass.stroke.color.g, pass.stroke.color.b),
+        setLineWidth(pass.stroke.width),
+        setLineJoin(LineJoinStyle.Miter),
+        PDFOperator.of(PDFOperatorNames.SetLineMiterLimit, [PDFNumber.of(pass.stroke.miterLimit)]),
+      );
+    } else {
+      ops.push(setTextRenderingMode(TextRenderingMode.Fill));
+    }
+    for (const glyph of placements) {
+      // Baseline origin: the placement point plus the middle→baseline drop, in the glyph's own frame.
+      const cos = Math.cos(glyph.rotation);
+      const sin = Math.sin(glyph.rotation);
+      const ox = glyph.x + pass.dx - sin * middleToBaseline;
+      const oy = glyph.y + pass.dy + cos * middleToBaseline;
+      // The cm above is y-down → y-up: local (x, y) lands at (x, -y), a y-down rotation φ becomes -φ.
+      ops.push(setTextMatrix(cos, -sin, sin, cos, ox, -oy), showText(font.encodeText(glyph.text)));
+    }
+    ops.push(endText(), popGraphicsState());
+    page.pushOperators(...ops);
+  }
 }
 
 /** An ExtGState with these alphas, on `page`'s resources; null when both are 1. */
@@ -553,7 +701,7 @@ function shapeOperators(shape: VectorShape, shading: PDFName | null): PDFOperato
       setStrokingRgbColor(strokeStyle.color.r, strokeStyle.color.g, strokeStyle.color.b),
       setLineWidth(strokeStyle.width),
       setLineCap(cap),
-      setLineJoin(LineJoinStyle.Miter),
+      setLineJoin(strokeStyle.join === "round" ? LineJoinStyle.Round : strokeStyle.join === "bevel" ? LineJoinStyle.Bevel : LineJoinStyle.Miter),
     );
   }
   ops.push(fillColor && strokeStyle ? fillAndStroke() : fillColor ? fill() : stroke());
@@ -656,15 +804,16 @@ async function sliceOpenPage(
 ): Promise<{ slices: Slice[]; fontFor: Map<TextLayer, PDFFont> }> {
   const layers = page.layers;
   const fontFor = new Map<TextLayer, PDFFont>();
-  const vector = new Map<Konva.Node, { layer: TextLayer; node: Konva.Text }>();
+  const vector = new Map<Konva.Node, { layer: TextLayer; node: TextNode }>();
   for (const layer of layers) {
-    if (layer.type !== "text" || !layer.visible || (layer.curve ?? 0) !== 0 || (layer.effect && layer.effect.type !== "none")) {
+    if (layer.type !== "text" || !layer.visible || textFallbackReason(layer) !== null) {
       continue;
     }
     const group = getLayerNode(layer.id);
-    const main = group instanceof Konva.Container ? group.findOne<Konva.Text>(`.${TEXT_MAIN_NAME}`) : undefined;
-    const font = main instanceof Konva.Text ? await fonts.get(layer) : null;
-    if (group && main instanceof Konva.Text && font && fontCovers(font, layer.text) && /^#?[0-9a-f]{6}$/i.test(layer.fill)) {
+    const main = group instanceof Konva.Container ? group.findOne<TextNode>(`.${TEXT_MAIN_NAME}`) : undefined;
+    const isText = main instanceof Konva.Text || main instanceof Konva.TextPath;
+    const font = isText ? await fonts.get(layer) : null;
+    if (group && isText && font && fontCovers(font, layer.text)) {
       fontFor.set(layer, font);
       vector.set(group, { layer, node: main });
     }
@@ -790,7 +939,7 @@ export async function exportDesignPdf(options: PdfExportOptions): Promise<Uint8A
         if (slice.kind === "text") {
           const font = fontFor.get(slice.layer);
           if (font) {
-            drawText(page, slice, font, design.height);
+            drawTextLayer(pdf, page, slice, font, design.height);
           }
           continue;
         }
