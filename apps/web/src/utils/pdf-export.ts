@@ -2,6 +2,7 @@ import fontkit from "@pdf-lib/fontkit";
 import Konva from "konva";
 import {
   type PDFFont,
+  type PDFImage,
   type PDFName,
   type PDFOperator,
   type PDFPage,
@@ -10,9 +11,11 @@ import {
   PDFContentStream,
   PDFDocument,
   appendBezierCurve,
+  clip,
   closePath,
   concatTransformationMatrix,
   drawObject,
+  endPath,
   fill,
   fillAndStroke,
   lineTo,
@@ -29,12 +32,14 @@ import {
   setStrokingRgbColor,
   stroke,
 } from "pdf-lib";
-import { type Layer, type TextLayer, parseFontStyle } from "@mycanvas/shared";
+import { type ImageAdjustments, type Layer, type TextLayer, parseFontStyle } from "@mycanvas/shared";
 import { useEditorStore } from "../store/editorStore";
 import { TEXT_MAIN_NAME } from "./behind-text";
 import { getContentLayer, getLayerNode } from "./canvas-bridge";
 import { ensureFontsLoaded, isGoogleFont } from "./fonts";
-import { type VectorShape, pathBounds, pdfLayerMatrix, vectorShapeForLayer } from "./pdf-vector";
+import { cssFilterFor, hasAdjustments } from "./image-filters";
+import { type PictureKind, type PicturePlacement, type Rect, flipMatrix, framePlacement, fullPictureRect, imagePlacement, jpegExifOrientation, pictureMatrix, sniffPicture } from "./pdf-picture";
+import { type PathCommand, type VectorShape, pathBounds, pdfLayerMatrix, shadowVisible, vectorShapeForLayer } from "./pdf-vector";
 import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
 
 /**
@@ -47,9 +52,12 @@ import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
  * - rects, shapes and lines with solid paint (no gradient or shadow) are
  *   drawn as PDF paths from the design model (see pdf-vector.ts), with the
  *   geometry the editor draws;
- * - everything else (background, images, frames, styled or curved text,
- *   gradients, shadows, effects) is rendered by Konva itself into image
- *   slices cropped to their content, so it looks exactly like the editor.
+ * - photos and filled frames embed the original file untouched, at full
+ *   resolution, clipped to the crop or the frame shape (see pdf-picture.ts);
+ *   a filtered photo embeds its filtered pixels at the photo's own size;
+ * - everything else (background, styled or curved text, gradients, shadows,
+ *   effects) is rendered by Konva itself into image slices cropped to their
+ *   content, so it looks exactly like the editor.
  * A text layer whose font file isn't available, or that uses characters
  * the font lacks, falls back to an image slice.
  */
@@ -66,7 +74,169 @@ export interface PdfExportOptions {
 type Slice =
   | { kind: "raster"; nodes: Konva.Node[]; withBackground: boolean }
   | { kind: "text"; layer: TextLayer; node: Konva.Text }
-  | { kind: "vector"; shape: VectorShape };
+  | { kind: "vector"; shape: VectorShape }
+  | { kind: "picture"; placement: PicturePlacement; image: HTMLImageElement; asset: string; adjust?: ImageAdjustments; node: Konva.Node };
+
+interface PictureFile {
+  bytes: Uint8Array;
+  kind: PictureKind | null;
+  /** JPEG EXIF orientation; anything but 1 needs re-encoding from the decoded pixels. */
+  orientation: number;
+}
+
+/** Asset files, fetched and embedded once per export. */
+class PictureSource {
+  private readonly files = new Map<string, Promise<PictureFile | null>>();
+  private readonly originals = new Map<string, Promise<PDFImage | null>>();
+
+  constructor(private readonly pdf: PDFDocument) {}
+
+  file(asset: string): Promise<PictureFile | null> {
+    let file = this.files.get(asset);
+    if (!file) {
+      file = fetch(`/assets/${asset}`)
+        .then(async (res) => {
+          if (!res.ok) {
+            return null;
+          }
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          const kind = sniffPicture(bytes);
+          return { bytes, kind, orientation: kind === "jpeg" ? jpegExifOrientation(bytes) : 1 };
+        })
+        .catch(() => null);
+      this.files.set(asset, file);
+    }
+    return file;
+  }
+
+  /** The untouched original, embedded once; null when pdf-lib can't take the file as is. */
+  original(asset: string): Promise<PDFImage | null> {
+    let image = this.originals.get(asset);
+    if (!image) {
+      image = this.file(asset).then(async (file) => {
+        if (!file?.kind || file.orientation !== 1) {
+          return null;
+        }
+        try {
+          return file.kind === "jpeg" ? await this.pdf.embedJpg(file.bytes) : await this.pdf.embedPng(file.bytes);
+        } catch {
+          return null;
+        }
+      });
+      this.originals.set(asset, image);
+    }
+    return image;
+  }
+}
+
+/** Longest side / pixel count of a picture render (memory). */
+const MAX_PICTURE_SIDE = 8192;
+const MAX_PICTURE_PIXELS = 32_000_000;
+
+/**
+ * The source rect of `image`, through the layer's filters, at the picture's
+ * own resolution (never the page's). Blur gets the editor's mirrored-edge
+ * padding so borders don't fade. `blurScale` is picture px per design px.
+ */
+function renderPicture(image: HTMLImageElement, source: Rect, adjust: ImageAdjustments | undefined, blurScale: number, asJpeg: boolean): { dataUrl: string; kind: PictureKind } | null {
+  const ratio = Math.min(1, MAX_PICTURE_SIDE / Math.max(source.width, source.height), Math.sqrt(MAX_PICTURE_PIXELS / (source.width * source.height)));
+  const width = Math.max(1, Math.round(source.width * ratio));
+  const height = Math.max(1, Math.round(source.height * ratio));
+  const out = document.createElement("canvas");
+  out.width = width;
+  out.height = height;
+  const ctx = out.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+  const blurPx = (adjust?.blur ?? 0) * blurScale * ratio;
+  const filter = hasAdjustments(adjust) ? cssFilterFor(adjust, blurScale * ratio) : "none";
+  if (blurPx > 0) {
+    const pad = Math.min(Math.ceil(blurPx * 3), width, height);
+    const padded = document.createElement("canvas");
+    padded.width = width + pad * 2;
+    padded.height = height + pad * 2;
+    const pctx = padded.getContext("2d");
+    if (!pctx) {
+      return null;
+    }
+    pctx.translate(pad, pad);
+    for (const i of [-1, 0, 1]) {
+      for (const j of [-1, 0, 1]) {
+        pctx.save();
+        pctx.translate(i === 1 ? width * 2 : 0, j === 1 ? height * 2 : 0);
+        pctx.scale(i === 0 ? 1 : -1, j === 0 ? 1 : -1);
+        pctx.drawImage(image, source.x, source.y, source.width, source.height, 0, 0, width, height);
+        pctx.restore();
+      }
+    }
+    ctx.filter = filter;
+    ctx.drawImage(padded, -pad, -pad);
+  } else {
+    ctx.filter = filter;
+    ctx.drawImage(image, source.x, source.y, source.width, source.height, 0, 0, width, height);
+  }
+  return asJpeg ? { dataUrl: out.toDataURL("image/jpeg", 0.92), kind: "jpeg" } : { dataUrl: out.toDataURL("image/png"), kind: "png" };
+}
+
+function pathOperators(path: PathCommand[]): PDFOperator[] {
+  return path.map((command) =>
+    command.op === "M"
+      ? moveTo(command.x, command.y)
+      : command.op === "L"
+        ? lineTo(command.x, command.y)
+        : command.op === "C"
+          ? appendBezierCurve(command.x1, command.y1, command.x2, command.y2, command.x, command.y)
+          : closePath(),
+  );
+}
+
+/**
+ * A photo or filled frame: the picture under the layer transform, clipped
+ * to the crop box or frame shape. False when it couldn't be embedded (the
+ * caller rasterizes the node instead).
+ */
+async function drawPicture(pdf: PDFDocument, page: PDFPage, slice: Extract<Slice, { kind: "picture" }>, pictures: PictureSource, designHeight: number): Promise<boolean> {
+  const { placement, image, asset, adjust } = slice;
+  const pictureWidth = image.naturalWidth;
+  const pictureHeight = image.naturalHeight;
+  let embedded: PDFImage | null = null;
+  let rect: Rect = placement.target;
+  if (!hasAdjustments(adjust)) {
+    embedded = await pictures.original(asset);
+    if (embedded) {
+      rect = fullPictureRect(placement, pictureWidth, pictureHeight);
+    }
+  }
+  if (!embedded) {
+    // Filtered, EXIF-rotated, or a format PDF lacks: the source pixels at their own size.
+    const file = await pictures.file(asset);
+    const render = renderPicture(image, placement.source, adjust, placement.source.width / placement.target.width, file?.kind === "jpeg");
+    if (!render) {
+      return false;
+    }
+    try {
+      embedded = render.kind === "jpeg" ? await pdf.embedJpg(render.dataUrl) : await pdf.embedPng(render.dataUrl);
+    } catch {
+      return false;
+    }
+  }
+  const [a, b, c, d, e, f] = pdfLayerMatrix(placement.matrix, designHeight, POINTS_PER_PX);
+  const ops: PDFOperator[] = [pushGraphicsState(), concatTransformationMatrix(a, b, c, d, e, f)];
+  const state = alphaState(pdf, page, placement.opacity, placement.opacity);
+  if (state) {
+    ops.push(setGraphicsState(state));
+  }
+  ops.push(...pathOperators(placement.clip), clip(), endPath());
+  const flip = flipMatrix(placement);
+  if (flip) {
+    ops.push(concatTransformationMatrix(...flip));
+  }
+  const [pa, pb, pc, pd, pe, pf] = pictureMatrix(rect);
+  ops.push(concatTransformationMatrix(pa, pb, pc, pd, pe, pf), drawObject(page.node.newXObject("Im", embedded.ref)), popGraphicsState());
+  page.pushOperators(...ops);
+  return true;
+}
 
 /**
  * Waits for the next paint. Hidden tabs pause animation frames, so a timer
@@ -304,18 +474,7 @@ function alphaState(pdf: PDFDocument, page: PDFPage, fillAlpha: number, strokeAl
 
 /** Path construction plus paint for a vector shape (alphas already in the graphics state). */
 function shapeOperators(shape: VectorShape): PDFOperator[] {
-  const ops: PDFOperator[] = [];
-  for (const command of shape.path) {
-    if (command.op === "M") {
-      ops.push(moveTo(command.x, command.y));
-    } else if (command.op === "L") {
-      ops.push(lineTo(command.x, command.y));
-    } else if (command.op === "C") {
-      ops.push(appendBezierCurve(command.x1, command.y1, command.x2, command.y2, command.x, command.y));
-    } else {
-      ops.push(closePath());
-    }
-  }
+  const ops: PDFOperator[] = pathOperators(shape.path);
   const { fill: fillColor, stroke: strokeStyle } = shape;
   if (fillColor) {
     ops.push(setFillingRgbColor(fillColor.r, fillColor.g, fillColor.b));
@@ -444,6 +603,36 @@ async function sliceOpenPage(layers: Layer[], fonts: FontSource, contentLayer: K
       shapes.set(node, shape);
     }
   }
+  const pictures = new Map<Konva.Node, Extract<Slice, { kind: "picture" }>>();
+  for (const layer of layers) {
+    if (!layer.visible || (layer.type !== "image" && layer.type !== "frame")) {
+      continue;
+    }
+    const node = getLayerNode(layer.id);
+    if (!node) {
+      continue;
+    }
+    if (layer.type === "image") {
+      // Outlined text behind a cutout is an overlay reading other nodes: raster.
+      if (shadowVisible(layer.shadow) || (layer.cutout && layer.behindText)) {
+        continue;
+      }
+      const image = node instanceof Konva.Image ? node.image() : undefined;
+      if (image instanceof HTMLImageElement && image.naturalWidth > 0) {
+        pictures.set(node, { kind: "picture", placement: imagePlacement(layer, image.naturalWidth, image.naturalHeight), image, asset: layer.asset, adjust: layer.adjust, node });
+      }
+      continue;
+    }
+    const content = layer.content;
+    const picture = node instanceof Konva.Container ? node.findOne<Konva.Image>("Image") : undefined;
+    const image = picture?.image();
+    if (content && image instanceof HTMLImageElement && image.naturalWidth > 0) {
+      const placement = framePlacement(layer, image.naturalWidth, image.naturalHeight);
+      if (placement) {
+        pictures.set(node, { kind: "picture", placement, image, asset: content.asset, adjust: layer.adjust, node });
+      }
+    }
+  }
   // Content-layer children in z-order. Unregistered helpers (the background
   // rect, per-layer overlays) travel with the node right before them.
   const slices: Slice[] = [];
@@ -459,6 +648,12 @@ async function sliceOpenPage(layers: Layer[], fonts: FontSource, contentLayer: K
     if (shape) {
       raster = null;
       slices.push({ kind: "vector", shape });
+      continue;
+    }
+    const picture = pictures.get(child);
+    if (picture) {
+      raster = null;
+      slices.push(picture);
       continue;
     }
     if (!raster) {
@@ -488,6 +683,7 @@ export async function exportDesignPdf(options: PdfExportOptions): Promise<Uint8A
   pdf.setCreator("MyCanvas");
   pdf.setProducer("MyCanvas (pdf-lib)");
   const fonts = new FontSource(pdf);
+  const pictures = new PictureSource(pdf);
   const k = POINTS_PER_PX;
 
   try {
@@ -517,7 +713,16 @@ export async function exportDesignPdf(options: PdfExportOptions): Promise<Uint8A
           drawVector(pdf, page, slice.shape, design.height);
           continue;
         }
-        const image = rasterize(contentLayer, slice, design.width, design.height, options.pixelRatio);
+        let raster: Extract<Slice, { kind: "raster" }>;
+        if (slice.kind === "picture") {
+          if (await drawPicture(pdf, page, slice, pictures, design.height)) {
+            continue;
+          }
+          raster = { kind: "raster", nodes: [slice.node], withBackground: false };
+        } else {
+          raster = slice;
+        }
+        const image = rasterize(contentLayer, raster, design.width, design.height, options.pixelRatio);
         if (!image) {
           continue;
         }

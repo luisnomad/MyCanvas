@@ -282,7 +282,7 @@ export function shapeLayerPath(layer: Pick<ShapeLayer, "shape" | "width" | "heig
 }
 
 /** A shadow Konva would actually paint. */
-function shadowVisible(shadow: ShadowEffect | undefined): boolean {
+export function shadowVisible(shadow: ShadowEffect | undefined): boolean {
   if (!shadow?.enabled || !(shadow.opacity > 0)) {
     return false;
   }
