@@ -364,9 +364,7 @@ export function vectorFallbackReason(layer: Layer): string | null {
   if (layer.type !== "rect" && layer.type !== "shape" && layer.type !== "line") {
     return "not a vector type yet";
   }
-  if (shadowVisible(layer.shadow)) {
-    return "shadow";
-  }
+  // A visible shadow is not a reason: the exporter draws it as its own picture under the shape.
   if (layer.type !== "line" && layer.gradient && layer.gradient.stops.length >= 2 && !gradientShading(layer.gradient, layer.width, layer.height)) {
     return "gradient";
   }

@@ -69,9 +69,11 @@ import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
  * - photos and filled frames embed the original file untouched, at full
  *   resolution, clipped to the crop or the frame shape (see pdf-picture.ts);
  *   a filtered photo embeds its filtered pixels at the photo's own size;
- * - everything else (background, styled or curved text, gradients, shadows,
- *   effects) is rendered by Konva itself into image slices cropped to their
- *   content, so it looks exactly like the editor.
+ * - a shadow or glow is the one soft thing left: it is rendered by Konva
+ *   as a picture of just that effect (the layer drawn with and without it,
+ *   subtracted) under the layer's own vector, text or picture slice;
+ * - everything else is rendered by Konva itself into image slices cropped
+ *   to their content, so it looks exactly like the editor.
  * A text layer whose font file isn't available, or that uses characters
  * the font lacks, falls back to an image slice.
  */
@@ -89,7 +91,14 @@ type Slice =
   | { kind: "raster"; nodes: Konva.Node[]; withBackground: boolean }
   | { kind: "text"; layer: TextLayer; node: TextNode }
   | { kind: "vector"; shape: VectorShape }
-  | { kind: "picture"; placement: PicturePlacement; image: HTMLImageElement; asset: string; adjust?: ImageAdjustments; node: Konva.Node };
+  | { kind: "picture"; placement: PicturePlacement; image: HTMLImageElement; asset: string; adjust?: ImageAdjustments; node: Konva.Node }
+  /**
+   * The soft part of a layer (shadow, glow) alone, drawn under the layer's
+   * own vector/text/picture slice. "shadow": the shadow layer recovered from
+   * the node rendered with and without it; "glow": the group with the text
+   * hidden.
+   */
+  | { kind: "effect"; node: Konva.Node; pad: number; mode: "shadow" | "glow"; prepare: () => () => void };
 
 interface PictureFile {
   bytes: Uint8Array;
@@ -763,7 +772,7 @@ function drawVector(pdf: PDFDocument, page: PDFPage, shape: VectorShape, designH
 }
 
 /** Renders `nodes` (and nothing else) of the content layer into an image slice. */
-function rasterize(contentLayer: Konva.Layer, slice: Extract<Slice, { kind: "raster" }>, width: number, height: number, pixelRatio: number) {
+function rasterize(contentLayer: Konva.Layer, slice: Extract<Slice, { kind: "raster" }>, width: number, height: number, pixelRatio: number, forcedBox?: { x: number; y: number; width: number; height: number }) {
   const keep = new Set(slice.nodes);
   const saved = contentLayer.getChildren().map((child) => [child, child.opacity()] as const);
   // Hide by opacity, not visibility: overlays that read other nodes' state
@@ -772,8 +781,8 @@ function rasterize(contentLayer: Konva.Layer, slice: Extract<Slice, { kind: "ras
     child.opacity(keep.has(child) ? opacity : 0);
   }
   try {
-    let box = { x: 0, y: 0, width, height };
-    if (!slice.withBackground) {
+    let box = forcedBox ?? { x: 0, y: 0, width, height };
+    if (!forcedBox && !slice.withBackground) {
       const rects = slice.nodes.map((node) => node.getClientRect());
       const x0 = Math.max(0, Math.floor(Math.min(...rects.map((r) => r.x))));
       const y0 = Math.max(0, Math.floor(Math.min(...rects.map((r) => r.y))));
@@ -793,6 +802,184 @@ function rasterize(contentLayer: Konva.Layer, slice: Extract<Slice, { kind: "ras
       child.opacity(opacity);
     }
   }
+}
+
+function isShape(node: Konva.Node): node is Konva.Shape {
+  return node instanceof Konva.Shape;
+}
+
+/** The node and every shape under it. */
+function descendantShapes(node: Konva.Node): Konva.Shape[] {
+  if (isShape(node)) {
+    return [node];
+  }
+  if (node instanceof Konva.Container) {
+    const children = node.getChildren() as Konva.Node[];
+    return children.flatMap(descendantShapes);
+  }
+  return [];
+}
+
+function loadDataUrl(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => { resolve(image); };
+    image.onerror = () => { reject(new Error("Could not decode a rendered slice")); };
+    image.src = dataUrl;
+  });
+}
+
+/** Turns off the shadows of a node's shapes for one render. Returns the undo. */
+function withoutShadows(node: Konva.Node): () => void {
+  const restores: (() => void)[] = [];
+  for (const shape of descendantShapes(node)) {
+    if (shape.shadowEnabled()) {
+      shape.shadowEnabled(false);
+      restores.push(() => { shape.shadowEnabled(true); });
+    }
+  }
+  return () => {
+    restores.forEach((restore) => { restore(); });
+  };
+}
+
+/** Hides a text group's own glyphs for one render, leaving its glow copy. Returns the undo. */
+function withoutMainText(node: Konva.Node): () => void {
+  const restores: (() => void)[] = [];
+  if (node instanceof Konva.Container) {
+    for (const child of node.getChildren() as Konva.Node[]) {
+      if (child.name() === TEXT_MAIN_NAME) {
+        const opacity = child.opacity();
+        child.opacity(0);
+        restores.push(() => { child.opacity(opacity); });
+      }
+    }
+  }
+  return () => {
+    restores.forEach((restore) => { restore(); });
+  };
+}
+
+/**
+ * The shadow layer alone. Canvas composites a shape over its own shadow in
+ * one draw (A = B over S, with B the shape alone and S the shadow at the
+ * shape's alpha), so in premultiplied terms S = (A − B) / (1 − αB). That
+ * holds for Konva's buffered draws too (fill+stroke under opacity): there
+ * the shape is opaque in the buffer and no shadow is left under it.
+ */
+function shadowLayer(full: HTMLImageElement, bare: HTMLImageElement): HTMLCanvasElement | null {
+  const width = full.naturalWidth;
+  const height = full.naturalHeight;
+  const read = (image: HTMLImageElement) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return null;
+    }
+    ctx.drawImage(image, 0, 0);
+    return { canvas, ctx, data: ctx.getImageData(0, 0, width, height) };
+  };
+  const a = read(full);
+  const b = read(bare);
+  if (!a || !b) {
+    return null;
+  }
+  const out = a.ctx.createImageData(width, height);
+  const A = a.data.data;
+  const B = b.data.data;
+  const S = out.data;
+  for (let i = 0; i < A.length; i += 4) {
+    const alphaA = (A[i + 3] ?? 0) / 255;
+    const alphaB = (B[i + 3] ?? 0) / 255;
+    const keep = 1 - alphaB;
+    if (keep < 0.02) {
+      continue; // under the shape: nothing of the shadow is left to show
+    }
+    const alphaS = Math.min(1, Math.max(0, (alphaA - alphaB) / keep));
+    if (alphaS <= 0) {
+      continue;
+    }
+    for (let c = 0; c < 3; c += 1) {
+      const premultiplied = ((A[i + c] ?? 0) * alphaA - (B[i + c] ?? 0) * alphaB) / keep;
+      S[i + c] = Math.min(255, Math.max(0, Math.round(premultiplied / alphaS)));
+    }
+    S[i + 3] = Math.round(alphaS * 255);
+  }
+  a.ctx.putImageData(out, 0, 0);
+  return a.canvas;
+}
+
+/** How far a layer's soft effect may reach past Konva's client rect. */
+function softEffectPad(node: Konva.Node, layer: Layer): number {
+  let blur = 0;
+  for (const shape of descendantShapes(node)) {
+    blur = Math.max(blur, shape.shadowEnabled() ? shape.shadowBlur() : 0);
+  }
+  if (layer.type === "text" && layer.effect?.type === "glow") {
+    blur = Math.max(blur, layer.effect.spread + (layer.effect.blur ?? 20) * 2);
+  }
+  return Math.ceil(blur) + 4;
+}
+
+/** Whether the layer has a soft effect that gets its own picture under the layer. */
+function hasSoftEffect(layer: Layer): boolean {
+  if (layer.type === "text") {
+    return layer.effect?.type === "shadow" || layer.effect?.type === "glow";
+  }
+  return layer.type !== "frame" && shadowVisible(layer.shadow);
+}
+
+/**
+ * The soft effect alone: the node rendered with and without it, the
+ * latter subtracted, at the export's pixel ratio.
+ */
+async function drawEffect(pdf: PDFDocument, page: PDFPage, slice: Extract<Slice, { kind: "effect" }>, contentLayer: Konva.Layer, size: { width: number; height: number }, pixelRatio: number) {
+  const rect = slice.node.getClientRect();
+  const x0 = Math.max(0, Math.floor(rect.x - slice.pad));
+  const y0 = Math.max(0, Math.floor(rect.y - slice.pad));
+  const x1 = Math.min(size.width, Math.ceil(rect.x + rect.width + slice.pad));
+  const y1 = Math.min(size.height, Math.ceil(rect.y + rect.height + slice.pad));
+  if (x1 <= x0 || y1 <= y0) {
+    return;
+  }
+  const box = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+  const only: Extract<Slice, { kind: "raster" }> = { kind: "raster", nodes: [slice.node], withBackground: false };
+  const render = (prepare?: () => () => void) => {
+    const restore = prepare?.();
+    try {
+      return rasterize(contentLayer, only, size.width, size.height, pixelRatio, box);
+    } finally {
+      restore?.();
+    }
+  };
+  let dataUrl: string;
+  if (slice.mode === "glow") {
+    const glow = render(slice.prepare);
+    if (!glow) {
+      return;
+    }
+    dataUrl = glow.dataUrl;
+  } else {
+    const full = render();
+    if (!full) {
+      return;
+    }
+    const bare = render(slice.prepare);
+    if (!bare) {
+      return;
+    }
+    const [fullImage, bareImage] = await Promise.all([loadDataUrl(full.dataUrl), loadDataUrl(bare.dataUrl)]);
+    const shadow = shadowLayer(fullImage, bareImage);
+    if (!shadow) {
+      return;
+    }
+    dataUrl = shadow.toDataURL("image/png");
+  }
+  const embedded = await pdf.embedPng(dataUrl);
+  const k = POINTS_PER_PX;
+  page.drawImage(embedded, { x: box.x * k, y: (size.height - box.y - box.height) * k, width: box.width * k, height: box.height * k });
 }
 
 /** Builds the open page's slices in z-order. */
@@ -840,7 +1027,7 @@ async function sliceOpenPage(
     }
     if (layer.type === "image") {
       // Outlined text behind a cutout is an overlay reading other nodes: raster.
-      if (shadowVisible(layer.shadow) || (layer.cutout && layer.behindText)) {
+      if (layer.cutout && layer.behindText) {
         continue;
       }
       const image = node instanceof Konva.Image ? node.image() : undefined;
@@ -861,9 +1048,26 @@ async function sliceOpenPage(
   }
   // Content-layer children in z-order. Unregistered helpers (the background
   // rect, per-layer overlays) travel with the node right before them.
+  // Soft effects of layers that got a vector/text/picture slice: a picture of just the effect, under it.
+  const effects = new Map<Konva.Node, Extract<Slice, { kind: "effect" }>>();
+  for (const layer of layers) {
+    if (!layer.visible || !hasSoftEffect(layer)) {
+      continue;
+    }
+    const node = getLayerNode(layer.id);
+    if (node && (vector.has(node) || shapes.has(node) || pictures.has(node))) {
+      const glow = layer.type === "text" && layer.effect?.type === "glow";
+      effects.set(node, { kind: "effect", node, pad: softEffectPad(node, layer), mode: glow ? "glow" : "shadow", prepare: () => (glow ? withoutMainText(node) : withoutShadows(node)) });
+    }
+  }
   const slices: Slice[] = [];
   let raster: Extract<Slice, { kind: "raster" }> | null = null;
   for (const child of contentLayer.getChildren()) {
+    const effect = effects.get(child);
+    if (effect) {
+      raster = null;
+      slices.push(effect);
+    }
     if (child.name() === "canvas-background") {
       const background = backgroundShape(page.background, page.backgroundGradient, size.width, size.height);
       if (background) {
@@ -945,6 +1149,10 @@ export async function exportDesignPdf(options: PdfExportOptions): Promise<Uint8A
         }
         if (slice.kind === "vector") {
           drawVector(pdf, page, slice.shape, design.height);
+          continue;
+        }
+        if (slice.kind === "effect") {
+          await drawEffect(pdf, page, slice, contentLayer, { width: design.width, height: design.height }, options.pixelRatio);
           continue;
         }
         let raster: Extract<Slice, { kind: "raster" }>;

@@ -196,9 +196,9 @@ export function textFallbackReason(layer: TextLayer): string | null {
     case "background":
       return parseCssColor(effect.color) ? null : "effect color";
     case "glitch":
+    // Shadow and glow are soft: the exporter draws them as a picture under the text.
+    case "shadow":
+    case "glow":
       return null;
-    default:
-      // Shadow and glow are soft: they get their own picture under the text.
-      return effect.type;
   }
 }

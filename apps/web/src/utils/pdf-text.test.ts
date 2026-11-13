@@ -122,8 +122,9 @@ describe("textFallbackReason", () => {
     expect(textFallbackReason({ ...base, effect: { type: "outline", color: "#fff", thickness: 3 } })).toBeNull();
     expect(textFallbackReason({ ...base, curve: 40, effect: { type: "background", color: "#ff0", spread: 10, roundness: 50, opacity: 1 } })).toBeNull();
   });
-  it("sends soft effects and unreadable colors to raster", () => {
-    expect(textFallbackReason({ ...base, effect: { type: "glow", color: "#ff0", spread: 10, strength: 50 } })).toBe("glow");
+  it("keeps soft effects as text (their glow or shadow becomes a picture underneath) and sends unreadable colors to raster", () => {
+    expect(textFallbackReason({ ...base, effect: { type: "glow", color: "#ff0", spread: 10, strength: 50 } })).toBeNull();
+    expect(textFallbackReason({ ...base, effect: { type: "shadow", color: "#000", distance: 5, angle: 45, blur: 8, opacity: 0.5 } })).toBeNull();
     expect(textFallbackReason({ ...base, fill: "hsl(1,1%,1%)" })).toBe("fill color");
     expect(textFallbackReason({ ...base, curve: 100 })).toBe("full circle");
   });

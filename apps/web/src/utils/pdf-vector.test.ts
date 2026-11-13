@@ -230,11 +230,12 @@ describe("vectorShapeForLayer", () => {
     expect(v?.opacity).toBe(0.4);
   });
 
-  it("falls back to raster for per-stop alpha gradients, shadows and unreadable colors", () => {
+  it("falls back to raster for per-stop alpha gradients and unreadable colors", () => {
     const gradient = { type: "linear" as const, angle: 0, stops: [{ offset: 0, color: "#00000080" }, { offset: 1, color: "#fff" }] };
     expect(vectorFallbackReason(rect({ gradient }))).toBe("gradient");
     expect(vectorShapeForLayer(shape({ gradient }))).toBeNull();
-    expect(vectorShapeForLayer(line({ shadow: { ...noShadow, enabled: true, opacity: 0.5, blur: 4 } }))).toBeNull();
+    // A shadow no longer forces raster: the exporter draws it as a separate picture under the vector.
+    expect(vectorShapeForLayer(line({ shadow: { ...noShadow, enabled: true, opacity: 0.5, blur: 4 } }))).not.toBeNull();
     expect(vectorShapeForLayer(rect({ fill: "hsl(10, 50%, 50%)" }))).toBeNull();
     // A one-stop gradient isn't drawn by the editor either: solid fill.
     expect(vectorShapeForLayer(rect({ gradient: { ...gradient, stops: [{ offset: 0, color: "#000" }] } }))).not.toBeNull();
