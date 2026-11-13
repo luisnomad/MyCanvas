@@ -25,6 +25,7 @@ import { TEXT_MAIN_NAME, behindTextOutlineSceneFunc } from "../utils/behind-text
 import { gradientFillProps } from "../utils/gradients";
 import { imageLookSceneFunc } from "../utils/image-filters";
 import { arcSvgData, curveArc, curveTextPad } from "../utils/pdf-text";
+import { assetUrl } from "../utils/endpoints";
 
 interface LayerNodeProps {
   layer: Layer;
@@ -378,7 +379,7 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
 
 function ImageNode({ layer, registerRef }: { layer: ImageLayer } & LayerNodeProps) {
   const { common, setRefs } = useCommonNodeProps(layer, registerRef);
-  const image = useImage(`/assets/${layer.asset}`);
+  const image = useImage(assetUrl(layer.asset));
   const behind = layer.cutout ? layer.behindText : undefined;
   const behindWidth = behind?.width;
   const overlaySceneFunc = useMemo(
@@ -518,7 +519,7 @@ function FrameNode({ layer, registerRef }: { layer: FrameLayer } & LayerNodeProp
   const { common, setRefs, localRef } = useCommonNodeProps(layer, registerRef);
   const editing = useEditorStore((state) => state.editingFrameId === layer.id);
   const content = layer.content;
-  const image = useImage(content ? `/assets/${content.asset}` : undefined);
+  const image = useImage(content ? assetUrl(content.asset) : undefined);
   const radius = layer.cornerRadius ?? 0;
   const box = frameContentBox(layer);
 

@@ -67,6 +67,21 @@ function jsonInit(method: string, body: unknown): RequestInit {
 
 export type { AssetInfo };
 
+/** A design's share link (server: share-routes.ts). */
+export interface ShareInfo {
+  token: string;
+  /** "/s/<token>" */
+  path: string;
+  hasPin: boolean;
+  createdAt: string;
+}
+
+export interface ShareState {
+  share: ShareInfo | null;
+  /** The public host for links (MYCANVAS_PUBLIC_URL), when the server knows it. */
+  publicUrl?: string | null;
+}
+
 export interface CreateDesignInput {
   name?: string;
   aspectRatioId?: string;
@@ -124,6 +139,11 @@ export const api = {
   moveDesign: (id: string, folderId: string | null) =>
     request<DesignSummary>(`/api/designs/${encodeURIComponent(id)}/move`, jsonInit("POST", { folderId })),
   /** Every locked design (lock badges in the project list). */
+  getShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`),
+  /** Creates or changes the link: `pin` null removes it; `newLink` throws the old one away. */
+  saveShare: (id: string, change: { pin?: string | null; newLink?: boolean }) =>
+    request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, jsonInit("PUT", change)),
+  stopShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, { method: "DELETE" }),
   listLocks: () => request<DesignLock[]>("/api/locks"),
   getLock: (id: string) => request<DesignLock | null>(`/api/designs/${encodeURIComponent(id)}/lock`),
   /** Locks the design to this person (first edit); ApiError 423 while Claude has it. */

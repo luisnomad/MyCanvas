@@ -18,7 +18,9 @@ export type WorkspaceEvent =
   | { type: "design.thumbnail"; id: string }
   | { type: "lock.changed"; id: string; lock: unknown }
   | { type: "assets.changed" }
-  | { type: "fonts.changed" };
+  | { type: "fonts.changed" }
+  /** The design's share link was created, changed or removed (viewers re-check). */
+  | { type: "share.changed"; id: string };
 
 type Listener = (event: WorkspaceEvent) => void;
 
@@ -58,8 +60,11 @@ export function clientIdOf(c: Context): string | null {
   return value !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
 }
 
-/** An SSE response streaming the workspace's events until the client leaves. */
-export function eventStream(c: Context, ws: Workspace): Response {
+/**
+ * An SSE response streaming the workspace's events until the client leaves.
+ * `only` keeps just the events a listener may see (a share viewer).
+ */
+export function eventStream(c: Context, ws: Workspace, only?: (event: WorkspaceEvent) => boolean): Response {
   c.header("Cache-Control", "no-cache, no-transform");
   // Stops nginx-style proxies from buffering the stream.
   c.header("X-Accel-Buffering", "no");
@@ -67,6 +72,9 @@ export function eventStream(c: Context, ws: Workspace): Response {
     const queue: WorkspaceEvent[] = [];
     let wake: (() => void) | null = null;
     const unsubscribe = subscribe(ws, (event) => {
+      if (only && !only(event)) {
+        return;
+      }
       queue.push(event);
       wake?.();
     });

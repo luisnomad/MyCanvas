@@ -139,12 +139,12 @@ function cssString(value: string): string {
   return `"${value.replace(/["\\\n\r]/g, "")}"`;
 }
 
-/** @font-face rules for every face, served as /api/fonts/custom.css. */
-export function fontFaceCss(fonts: CustomFont[]): string {
+/** @font-face rules for every face, served as /api/fonts/custom.css (files under `base`). */
+export function fontFaceCss(fonts: CustomFont[], base = "/fonts/"): string {
   return fonts.map((font) => [
     "@font-face {",
     `  font-family: ${cssString(font.family)};`,
-    `  src: url("/fonts/${font.id}") format("${font.id.endsWith(".otf") ? "opentype" : "truetype"}");`,
+    `  src: url("${base}${font.id}") format("${font.id.endsWith(".otf") ? "opentype" : "truetype"}");`,
     // A variable font covers the whole weight range.
     `  font-weight: ${font.variable ? "100 900" : String(font.weight)};`,
     `  font-style: ${font.italic ? "italic" : "normal"};`,

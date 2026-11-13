@@ -24,6 +24,8 @@ import { readAssetManifest, saveAsset } from "./assets-store";
 import { registerSourceFileRoute } from "./agent/render-routes";
 import { registerAgentRoutes } from "./agent/routes";
 import { type Identity, identify } from "./auth";
+import { registerShareRoutes } from "./share-routes";
+import { deleteShare } from "./shares";
 import {
   type CreateDesignInput,
   cleanFolderName,
@@ -227,6 +229,7 @@ app.delete("/api/designs/:id", async (c) => {
     return c.json({ error: "Not found" }, 404);
   }
   await dropLock(c.get("ws"), id);
+  await deleteShare(c.get("ws").email, id);
   publish(c.get("ws"), { type: "design.deleted", id, by: "human", clientId: clientIdOf(c) });
   return c.json({ ok: true });
 });
@@ -655,6 +658,7 @@ app.put("/api/fonts/favorites", async (c) => {
 registerAiRoutes(app);
 registerAssetFolderRoutes(app, isSafeAssetFile);
 registerAgentRoutes(app, { isSafeAssetFile, listAssets });
+registerShareRoutes(app, { isSafeAssetFile, imageTypes: IMAGE_TYPES });
 registerSourceFileRoute(app);
 
 app.get("/healthz", (c) => c.json({ ok: true }));

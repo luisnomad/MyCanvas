@@ -146,6 +146,11 @@ export interface EditorStore {
    * history. `message` is shown as a toast.
    */
   syncFromServer: (message?: string) => Promise<void>;
+  /**
+   * Shows a design fetched elsewhere, read-only (the share viewer): keeps the
+   * open page when it still exists, never saves.
+   */
+  presentDesign: (design: Design) => void;
   /** Replace the selection (group-aware: a member selects its whole group). */
   selectLayer: (id: string | null) => void;
   /** Shift-click toggle (group-aware). */
@@ -626,6 +631,32 @@ export const useEditorStore = create<EditorStore>()((set, get) => {
       if (message) {
         get().showToast(message);
       }
+    },
+
+    presentDesign: (incoming) => {
+      const fresh = normalizeDesign(incoming);
+      fresh.pages = fresh.pages.map((page) => ({ ...page, layers: page.layers.map(migrateTextEffect) }));
+      const state = get();
+      const pageId = state.design?.id === fresh.id && fresh.pages.some((page) => page.id === state.activePageId)
+        ? state.activePageId
+        : fresh.pages[0]?.id ?? "";
+      set({
+        design: withActivePage(fresh, pageId),
+        activePageId: pageId,
+        loadStatus: "ready",
+        saveStatus: "saved",
+        unsavedEdits: false,
+        selectedLayerIds: [],
+        editingGroupId: null,
+        editingTextLayerId: null,
+        editingFrameId: null,
+        contextMenu: null,
+        past: [],
+        future: [],
+        pendingSnapshot: null,
+        lock: null,
+      });
+      void ensureFontsLoaded(fresh.pages.flatMap((page) => page.layers).filter((layer): layer is TextLayer => layer.type === "text"));
     },
 
     selectLayer: (id) => {

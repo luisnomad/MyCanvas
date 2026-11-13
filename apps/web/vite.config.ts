@@ -14,6 +14,8 @@ export default defineConfig({
       "/api": api,
       "/assets": api,
       "/fonts": api,
+      // Share links: /s/<token> is the page (Vite serves it), everything below it is the server's.
+      "^/s/[a-f0-9]{32}/.+": api,
     },
   },
 });

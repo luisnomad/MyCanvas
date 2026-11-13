@@ -53,6 +53,7 @@ import { type PictureKind, type PicturePlacement, type Rect, flipMatrix, framePl
 import { type Band, arcPath, curveArc, curveTextPad, curvedGlyphs, effectOffset, straightBands, textFallbackReason } from "./pdf-text";
 import { type PathCommand, type Rgba, type ShadingSpec, type VectorShape, type VectorStroke, backgroundShape, layerMatrix, parseCssColor, pathBounds, pdfLayerMatrix, shadowVisible, vectorShapeForLayer } from "./pdf-vector";
 import { padTrueTypeGlyphs } from "./ttf-even-glyphs";
+import { assetUrl } from "./endpoints";
 
 /**
  * Multi-page PDF export with real text.
@@ -118,7 +119,7 @@ class PictureSource {
   file(asset: string): Promise<PictureFile | null> {
     let file = this.files.get(asset);
     if (!file) {
-      file = fetch(`/assets/${asset}`)
+      file = fetch(assetUrl(asset))
         .then(async (res) => {
           if (!res.ok) {
             return null;

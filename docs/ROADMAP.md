@@ -602,6 +602,17 @@ lives). Not started; parking L/M/N confirmed by the user.
   `7bc1098`): 30×30px
   circles, 8px gaps, 5 per row inside the existing 216px popover (no horizontal
   scroll); active ring offset bumped to 2px. Photo-row thumbnails unchanged.
+- **Share links** (user-requested, 2026-11-13; on `agent-api`): Share button in
+  the editor → a read-only, live view of one design at `/s/<token>` (the design
+  alone, no MyCanvas UI, page arrows for multi-page). Optional 4–8 digit PIN
+  (scrypt-hashed; 8 misses lock PIN entry for 10 min); "New link" throws the
+  old link away, changing the PIN signs out earlier viewers, Stop sharing and
+  deleting the design end it. Records in `data/shares.json`; the viewer only
+  gets this design, its images and the uploaded fonts (`share-routes.ts`).
+  **Deploy needs:** a Cloudflare Access *bypass* for `/s/*` and `/static/*` on
+  mycanvas.luisserrano.es (everything else stays behind Access), and
+  `MYCANVAS_PUBLIC_URL=https://mycanvas.luisserrano.es` so links copied from
+  canva.local point at the public host.
 - Queued small item (user-requested, 2026-11-13): **highlight on the canvas
   when hovering a row in the layers panel**, so it's clear which layer is
   which. Reuse the canvas hover box (`hoverBox` in CanvasStage: accent

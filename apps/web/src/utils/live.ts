@@ -1,4 +1,5 @@
 import { type DesignLock } from "@mycanvas/shared";
+import { liveEventsUrl } from "./endpoints";
 
 /*
  * Live updates from the server (Server-Sent Events, /api/events): one
@@ -16,9 +17,10 @@ export type LiveEvent =
   | { type: "lock.changed"; id: string; lock: DesignLock | null }
   | { type: "assets.changed" }
   | { type: "fonts.changed" }
+  | { type: "share.changed"; id: string }
   | { type: "reconnected" };
 
-const EVENT_TYPES = ["design.updated", "design.created", "design.deleted", "design.thumbnail", "lock.changed", "assets.changed", "fonts.changed"];
+const EVENT_TYPES = ["design.updated", "design.created", "design.deleted", "design.thumbnail", "lock.changed", "assets.changed", "fonts.changed", "share.changed"];
 
 type Handler = (event: LiveEvent) => void;
 
@@ -57,7 +59,7 @@ function open(): void {
   if (source || typeof EventSource === "undefined") {
     return;
   }
-  const opened = new EventSource("/api/events");
+  const opened = new EventSource(liveEventsUrl());
   source = opened;
   lastSeen = Date.now();
   // A stream can die without the browser noticing (a proxy that keeps the

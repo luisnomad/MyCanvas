@@ -3,6 +3,7 @@ import { type ContentBox, type FrameContent, type FrameShape, coverContent, fram
 import { getCachedImageSize } from "../hooks/useImage";
 import { useEditorStore } from "../store/editorStore";
 import { roundedPolygonPath, shapePoints, traceRoundedPolygon } from "./rounded-path";
+import { assetUrl } from "./endpoints";
 
 export { clampContent, coverContent, coverScale, recoverContent } from "@mycanvas/shared";
 
@@ -58,7 +59,7 @@ export function followFrameBox<T extends Konva.Container>(frame: T, content: Fra
   if (!content || !synced || !(imageNode instanceof Konva.Image)) {
     return;
   }
-  const natural = getCachedImageSize(`/assets/${content.asset}`);
+  const natural = getCachedImageSize(assetUrl(content.asset));
   if (!natural) {
     return;
   }
@@ -166,7 +167,7 @@ export async function fillFrame(layerId: string, asset: string): Promise<void> {
   if (layer?.type !== "frame") {
     return;
   }
-  const size = getCachedImageSize(`/assets/${asset}`) ?? (await loadImageSize(`/assets/${asset}`));
+  const size = getCachedImageSize(assetUrl(asset)) ?? (await loadImageSize(assetUrl(asset)));
   const box = frameContentBox(layer);
   store.updateLayer(layerId, {
     content: coverContent(asset, size.width, size.height, box.width, box.height),

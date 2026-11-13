@@ -5,6 +5,7 @@ import { ContextBar } from "../components/ContextBar";
 import { ContextMenu } from "../components/ContextMenu";
 import { AgentEditingBanner, LeaveLockedDialog, LockStatus } from "../components/DesignLock";
 import { ExportDialog } from "../components/ExportDialog";
+import { ShareDialog } from "../components/ShareDialog";
 import { Inspector } from "../components/Inspector";
 import { LayersPanel } from "../components/LayersPanel";
 import { LeftToolbar } from "../components/LeftToolbar";
@@ -38,6 +39,7 @@ export function Editor({ designId }: { designId: string }) {
   const [fitScale, setFitScale] = useState(1);
   const [zoom, setZoom] = useState<number | null>(null);
   const [showExport, setShowExport] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const pageCount = useEditorStore((state) => state.design?.pages.length ?? 0);
   const [stripOpen, setStripOpen] = useState(false);
@@ -418,6 +420,16 @@ export function Editor({ designId }: { designId: string }) {
         </div>
         <button
           type="button"
+          className="secondary"
+          title="Share a read-only, live view (e.g. with a customer)"
+          onClick={() => {
+            setShowShare(true);
+          }}
+        >
+          Share
+        </button>
+        <button
+          type="button"
           className="primary"
           onClick={() => {
             setShowExport(true);
@@ -487,6 +499,14 @@ export function Editor({ designId }: { designId: string }) {
           </aside>
         </div>
       </div>
+      {showShare && (
+        <ShareDialog
+          designId={design.id}
+          onClose={() => {
+            setShowShare(false);
+          }}
+        />
+      )}
       {showExport && (
         <ExportDialog
           onClose={() => {

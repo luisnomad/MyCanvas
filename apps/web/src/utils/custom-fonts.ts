@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { type CustomFont } from "@mycanvas/shared";
+import { customFontsEndpoints } from "./endpoints";
 
 /*
  * Fonts uploaded into this workspace (docs/AGENT_API.md, "Fonts"). Their
@@ -61,7 +62,7 @@ export function loadCustomFonts(): Promise<void> {
   }
   loading = (async () => {
     try {
-      const res = await fetch("/api/fonts/custom");
+      const res = await fetch(customFontsEndpoints().list);
       if (!res.ok) {
         return;
       }
@@ -73,7 +74,7 @@ export function loadCustomFonts(): Promise<void> {
       const changed = new Set([...fonts, ...next].map((font) => font.family));
       signature = nextSignature;
       fonts = next;
-      await addStylesheet(`/api/fonts/custom.css?v=${encodeURIComponent(nextSignature.slice(0, 200))}`);
+      await addStylesheet(`${customFontsEndpoints().css}?v=${encodeURIComponent(nextSignature.slice(0, 200))}`);
       await withTimeout(Promise.all(next.map((font) =>
         document.fonts.load(`${font.italic ? "italic " : ""}${String(font.weight)} 16px "${font.family}"`).catch(() => []))), []);
       onFamiliesChanged([...changed]);
