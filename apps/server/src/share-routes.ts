@@ -3,6 +3,7 @@ import { getCookie, setCookie } from "hono/cookie";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { type Design, allLayers } from "@mycanvas/shared";
+import { AGENT_BASE } from "./agent/routes";
 import { type AppEnv } from "./app";
 import { readDesign } from "./designs";
 import { eventStream, publish } from "./events";
@@ -32,7 +33,9 @@ import { type Workspace, isSafeId, webDistDir, workspaceFor } from "./storage";
  * Share links (see shares.ts).
  *
  * Editor side, signed in like the rest of /api: GET/PUT/DELETE
- * /api/designs/:id/share.
+ * /api/designs/:id/share; the agent API has the same at
+ * /api/agent/v1/designs/:id/share (PUT { pin?, expiresInDays?,
+ * approvalRequested?, newLink? }; GET returns the reviews).
  *
  * Viewer side, public, everything under /s/<token> so a single path can be
  * let through the sign-in in front of the public host:
@@ -62,6 +65,21 @@ function approvalFor(record: ShareRecord, design: Design) {
     requested: record.approvalRequested === true,
     revision: design.revision ?? 0,
     latest: reviews.at(-1) ?? null,
+  };
+}
+
+function publicUrl(): string | null {
+  const url = process.env.MYCANVAS_PUBLIC_URL?.trim() ?? "";
+  return url === "" ? null : url;
+}
+
+/** The editor's (and the agent's) view of a link, with its full public URL when the server knows it. */
+function shareResponse(record: ShareRecord | null) {
+  const base = publicUrl();
+  return {
+    share: record ? shareInfo(record) : null,
+    publicUrl: base,
+    url: record && base ? `${base.replace(/\/+$/, "")}/s/${record.token}` : null,
   };
 }
 
@@ -145,51 +163,56 @@ function grantAccess(c: Context, record: ShareRecord): void {
 
 export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): void {
   // ── Editor side ──────────────────────────────────────────────────────
-  app.get("/api/designs/:id/share", async (c) => {
-    const id = c.req.param("id");
-    if (!isSafeId(id) || !await readDesign(c.get("ws"), id)) {
-      return c.json({ error: "Not found" }, 404);
-    }
-    const record = await shareForDesign(c.get("ws").email, id);
-    return c.json({ share: record ? shareInfo(record) : null, publicUrl: process.env.MYCANVAS_PUBLIC_URL ?? null });
-  });
-
-  app.put("/api/designs/:id/share", async (c) => {
-    const ws = c.get("ws");
-    const id = c.req.param("id");
-    if (!isSafeId(id) || !await readDesign(ws, id)) {
-      return c.json({ error: "Not found" }, 404);
-    }
-    const body = await jsonBody(c);
-    const pin = body.pin;
-    if (pin !== undefined && pin !== null && (typeof pin !== "string" || !PIN_PATTERN.test(pin))) {
-      return c.json({ error: "The PIN is 4 to 8 digits" }, 400);
-    }
-    const days = body.expiresInDays;
-    if (days !== undefined && days !== null && !(EXPIRY_DAYS as readonly unknown[]).includes(days)) {
-      return c.json({ error: `expiresInDays must be ${EXPIRY_DAYS.join(", ")} or null` }, 400);
-    }
-    const approval = body.approvalRequested;
-    if (approval !== undefined && typeof approval !== "boolean") {
-      return c.json({ error: "approvalRequested must be true or false" }, 400);
-    }
-    const record = await saveShare(ws.email, id, {
-      ...(pin === undefined ? {} : { pin }),
-      ...(approval === undefined ? {} : { approvalRequested: approval }),
-      ...(days === undefined ? {} : { expiresInDays: days as number | null }),
-      newLink: body.newLink === true,
+  // The same three routes for the signed-in editor and for the agent API
+  // (Claude shares a design and reads the reviews back). Both work in the
+  // owner's workspace; responses carry the full public `url` when known.
+  for (const base of ["/api/designs", `${AGENT_BASE}/designs`]) {
+    app.get(`${base}/:id/share`, async (c) => {
+      const id = c.req.param("id");
+      if (!isSafeId(id) || !await readDesign(c.get("ws"), id)) {
+        return c.json({ error: "Not found" }, 404);
+      }
+      const record = await shareForDesign(c.get("ws").email, id);
+      return c.json(shareResponse(record));
     });
-    publish(ws, { type: "share.changed", id });
-    return c.json({ share: shareInfo(record), publicUrl: process.env.MYCANVAS_PUBLIC_URL ?? null });
-  });
 
-  app.delete("/api/designs/:id/share", async (c) => {
-    const ws = c.get("ws");
-    const id = c.req.param("id");
-    await deleteShare(ws.email, id);
-    publish(ws, { type: "share.changed", id });
-    return c.json({ share: null });
-  });
+    app.put(`${base}/:id/share`, async (c) => {
+      const ws = c.get("ws");
+      const id = c.req.param("id");
+      if (!isSafeId(id) || !await readDesign(ws, id)) {
+        return c.json({ error: "Not found" }, 404);
+      }
+      const body = await jsonBody(c);
+      const pin = body.pin;
+      if (pin !== undefined && pin !== null && (typeof pin !== "string" || !PIN_PATTERN.test(pin))) {
+        return c.json({ error: "The PIN is 4 to 8 digits" }, 400);
+      }
+      const days = body.expiresInDays;
+      if (days !== undefined && days !== null && !(EXPIRY_DAYS as readonly unknown[]).includes(days)) {
+        return c.json({ error: `expiresInDays must be ${EXPIRY_DAYS.join(", ")} or null` }, 400);
+      }
+      const approval = body.approvalRequested;
+      if (approval !== undefined && typeof approval !== "boolean") {
+        return c.json({ error: "approvalRequested must be true or false" }, 400);
+      }
+      const record = await saveShare(ws.email, id, {
+        ...(pin === undefined ? {} : { pin }),
+        ...(approval === undefined ? {} : { approvalRequested: approval }),
+        ...(days === undefined ? {} : { expiresInDays: days as number | null }),
+        newLink: body.newLink === true,
+      });
+      publish(ws, { type: "share.changed", id });
+      return c.json(shareResponse(record));
+    });
+
+    app.delete(`${base}/:id/share`, async (c) => {
+      const ws = c.get("ws");
+      const id = c.req.param("id");
+      await deleteShare(ws.email, id);
+      publish(ws, { type: "share.changed", id });
+      return c.json({ share: null, url: null });
+    });
+  }
 
   // ── Viewer side (public) ─────────────────────────────────────────────
   app.get("/s/:token/design", async (c) => {

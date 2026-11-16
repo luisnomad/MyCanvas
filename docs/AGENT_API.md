@@ -442,6 +442,19 @@ edit), `POST /api/designs/:id/lock/takeover`, `DELETE /api/designs/:id/lock`
 (Unlock), `GET /api/locks` (all locks, for the project list),
 `GET /api/events`.
 
+### Share links and approvals
+
+| method | path | what |
+|---|---|---|
+| GET | `/designs/:id/share` | `{ share, url }`: the link (or `null`), its full public `url`, and `share.reviews` (approvals and change requests, oldest first) |
+| PUT | `/designs/:id/share` | create or change the link: `{ pin?, expiresInDays?, approvalRequested?, newLink? }`. `pin` is 4–8 digits or `null` to remove; omitted = no PIN on a new link. `expiresInDays` is 1, 7, 30 or `null` (never). |
+| DELETE | `/designs/:id/share` | stop sharing |
+
+Each review is `{ name, decision: "approved" | "changes", comment, at, revision }`.
+A review whose `revision` is below the design's current revision was given on
+an older version. Creating a link does not send it to anyone: Claude only
+emails a link when Luis asks.
+
 ## A typical Claude session
 
 ```sh
