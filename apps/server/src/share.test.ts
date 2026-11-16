@@ -243,6 +243,33 @@ describe("share links", () => {
     expect(fresh.share.reviews).toHaveLength(2);
   });
 
+  it("lets the agent create a link without a PIN, ask for approval and read the reviews back", async () => {
+    const { design } = await newDesign();
+    const agent = (init: RequestInit & { json?: unknown } = {}) => app.request(`${AGENT}/designs/${design.id}/share`, request({ ...init, as: "agent" }));
+    expect((await (await agent()).json())).toMatchObject({ share: null, url: null });
+    expect((await app.request(`${AGENT}/designs/${design.id}/share`, request({ method: "PUT", json: {} }))).status).toBe(401);
+
+    process.env.MYCANVAS_PUBLIC_URL = "https://canvas.example.com/";
+    try {
+      const made = (await (await agent({ method: "PUT", json: { approvalRequested: true, expiresInDays: 30 } })).json()) as {
+        share: { path: string; hasPin: boolean; approvalRequested: boolean };
+        url: string;
+      };
+      expect(made.share).toMatchObject({ hasPin: false, approvalRequested: true });
+      expect(made.url).toBe(`https://canvas.example.com${made.share.path}`);
+
+      const revision = ((await (await app.request(`${made.share.path}/design`, request({ as: "public" }))).json()) as { approval: { revision: number } }).approval.revision;
+      await app.request(`${made.share.path}/review`, request({ method: "POST", as: "public", json: { name: "Teresa", decision: "approved", comment: "OK", revision } }));
+      const back = (await (await agent()).json()) as { share: { reviews: { name: string; decision: string }[] } };
+      expect(back.share.reviews).toMatchObject([{ name: "Teresa", decision: "approved" }]);
+
+      expect((await agent({ method: "PUT", json: { pin: "1" } })).status).toBe(400);
+      expect((await (await agent({ method: "DELETE" })).json())).toMatchObject({ share: null });
+    } finally {
+      delete process.env.MYCANVAS_PUBLIC_URL;
+    }
+  });
+
   it("serves fonts CSS that points inside the link", async () => {
     const { design } = await newDesign();
     const base = (await share(design.id)).share?.path ?? "";
