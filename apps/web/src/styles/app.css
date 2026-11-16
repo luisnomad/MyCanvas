@@ -1226,9 +1226,19 @@ input.color-hex:focus {
   box-sizing: border-box;
 }
 
-.shared-pages-raised {
-  bottom: auto;
-  top: 16px;
+.shared-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Its own row under the design, so it never covers the page. */
+.shared-stage .shared-pages {
+  position: static;
+  transform: none;
+  align-self: center;
+  margin: 8px 0 12px;
 }
 
 /* Approval pill in the editor top bar */

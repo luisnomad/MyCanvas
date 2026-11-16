@@ -314,23 +314,26 @@ export function SharedView({ token }: { token: string }) {
 
   return (
     <div className="shared-view">
-      <div className="shared-canvas" inert>
-        <CanvasStage design={design} scale={fit} onFitScale={setFit} />
+      {/* The page switcher sits at the bottom of the design area, above the approval bar. */}
+      <div className="shared-stage">
+        <div className="shared-canvas" inert>
+          <CanvasStage design={design} scale={fit} onFitScale={setFit} />
+        </div>
+        {pages.length > 1 && (
+          <nav className="shared-pages" aria-label="Pages">
+            <button type="button" disabled={pageIndex === 0} aria-label="Previous page" onClick={() => { goToPage(pageIndex - 1); }}>‹</button>
+            <span>
+              {pageIndex + 1}
+              {" "}
+              /
+              {" "}
+              {pages.length}
+            </span>
+            <button type="button" disabled={pageIndex >= pages.length - 1} aria-label="Next page" onClick={() => { goToPage(pageIndex + 1); }}>›</button>
+          </nav>
+        )}
       </div>
       {approval?.requested && <ApprovalBar base={base} approval={approval} onDone={setApproval} />}
-      {pages.length > 1 && (
-        <nav className={approval?.requested ? "shared-pages shared-pages-raised" : "shared-pages"} aria-label="Pages">
-          <button type="button" disabled={pageIndex === 0} aria-label="Previous page" onClick={() => { goToPage(pageIndex - 1); }}>‹</button>
-          <span>
-            {pageIndex + 1}
-            {" "}
-            /
-            {" "}
-            {pages.length}
-          </span>
-          <button type="button" disabled={pageIndex >= pages.length - 1} aria-label="Next page" onClick={() => { goToPage(pageIndex + 1); }}>›</button>
-        </nav>
-      )}
     </div>
   );
 }
