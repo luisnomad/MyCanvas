@@ -10,9 +10,135 @@ import { onLive } from "../utils/live";
  * A share link (/s/<token>): the design alone, read-only, for someone
  * outside MyCanvas. It draws with the editor's own canvas (so it is the
  * real design, not a render) and follows changes live.
+ *
+ * When the link asks for approval, a bar lets the viewer approve the design
+ * or ask for changes, signing with their name (remembered on this device).
  */
 
 type Status = "loading" | "pin" | "ready" | "gone" | "expired" | "error";
+
+interface Review { name: string; decision: "approved" | "changes"; comment: string; at: string; revision: number }
+interface Approval { requested: boolean; revision: number; latest: Review | null }
+
+const NAME_KEY = "mycanvas.reviewerName";
+
+function savedName(): string {
+  try {
+    return localStorage.getItem(NAME_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberName(name: string): void {
+  try {
+    localStorage.setItem(NAME_KEY, name);
+  } catch {
+    // Private window: the name just isn't remembered.
+  }
+}
+
+function when(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+/** The approval bar under the design. */
+function ApprovalBar({ base, approval, onDone }: { base: string; approval: Approval; onDone: (approval: Approval) => void }) {
+  const [decision, setDecision] = useState<Review["decision"] | null>(null);
+  const [name, setName] = useState(savedName);
+  const [comment, setComment] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const latest = approval.latest;
+  const current = latest?.revision === approval.revision ? latest : null;
+
+  const send = async () => {
+    if (!decision) {
+      return;
+    }
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${base}/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), decision, comment: comment.trim(), revision: approval.revision }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string; approval?: Approval | null };
+      if (!res.ok) {
+        setError(body.error ?? "That didn't work. Try again.");
+        return;
+      }
+      rememberName(name.trim());
+      setDecision(null);
+      setComment("");
+      if (body.approval) {
+        onDone(body.approval);
+      }
+    } catch {
+      setError("Couldn't send it. Check your connection and try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (decision) {
+    const needsComment = decision === "changes";
+    return (
+      <form
+        className="shared-approval shared-approval-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send();
+        }}
+      >
+        <strong>{decision === "approved" ? "Approve this design" : "Request changes"}</strong>
+        <input
+          type="text"
+          aria-label="Your name"
+          placeholder="Your name"
+          autoComplete="name"
+          maxLength={80}
+          value={name}
+          onChange={(e) => { setName(e.target.value); }}
+        />
+        <textarea
+          aria-label={needsComment ? "What should change" : "Comment (optional)"}
+          placeholder={needsComment ? "What should change?" : "Comment (optional)"}
+          maxLength={2000}
+          rows={needsComment ? 4 : 2}
+          value={comment}
+          onChange={(e) => { setComment(e.target.value); }}
+        />
+        {error && <p className="shared-error" role="alert">{error}</p>}
+        <div className="shared-approval-actions">
+          <button type="button" className="secondary" onClick={() => { setDecision(null); setError(null); }}>Cancel</button>
+          <button type="submit" className="primary" disabled={sending || !name.trim() || (needsComment && !comment.trim())}>
+            {sending ? "Sending…" : "Send"}
+          </button>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="shared-approval">
+      <span className="shared-approval-status">
+        {current
+          ? current.decision === "approved"
+            ? `Approved by ${current.name} · ${when(current.at)}`
+            : `Changes requested by ${current.name} · ${when(current.at)}`
+          : latest
+            ? "Updated since the last review. Please take another look."
+            : "Your approval is requested."}
+      </span>
+      <div className="shared-approval-actions">
+        <button type="button" className="secondary" onClick={() => { setDecision("changes"); }}>Request changes</button>
+        <button type="button" className="primary" onClick={() => { setDecision("approved"); }}>Approve</button>
+      </div>
+    </div>
+  );
+}
 
 export function SharedView({ token }: { token: string }) {
   const base = `/s/${token}`;
@@ -23,6 +149,7 @@ export function SharedView({ token }: { token: string }) {
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [approval, setApproval] = useState<Approval | null>(null);
   const loadingRef = useRef(false);
   const againRef = useRef(false);
 
@@ -44,8 +171,9 @@ export function SharedView({ token }: { token: string }) {
       } else if (!res.ok) {
         setStatus("error");
       } else {
-        const body = (await res.json()) as { design: Design };
+        const body = (await res.json()) as { design: Design; approval?: Approval };
         useEditorStore.getState().presentDesign(body.design);
+        setApproval(body.approval ?? null);
         document.title = body.design.name || "Shared design";
         setStatus("ready");
       }
@@ -189,8 +317,9 @@ export function SharedView({ token }: { token: string }) {
       <div className="shared-canvas" inert>
         <CanvasStage design={design} scale={fit} onFitScale={setFit} />
       </div>
+      {approval?.requested && <ApprovalBar base={base} approval={approval} onDone={setApproval} />}
       {pages.length > 1 && (
-        <nav className="shared-pages" aria-label="Pages">
+        <nav className={approval?.requested ? "shared-pages shared-pages-raised" : "shared-pages"} aria-label="Pages">
           <button type="button" disabled={pageIndex === 0} aria-label="Previous page" onClick={() => { goToPage(pageIndex - 1); }}>‹</button>
           <span>
             {pageIndex + 1}

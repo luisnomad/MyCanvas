@@ -1,11 +1,18 @@
-import { useEffect, useState } from "react";
-import { type ShareInfo, type ShareState, api } from "../api";
+import { useCallback, useEffect, useState } from "react";
+import { type ShareInfo, type ShareReview, type ShareState, api } from "../api";
+import { useEditorStore } from "../store/editorStore";
+import { onLive } from "../utils/live";
 
 /*
  * Share a read-only, live view of the design (e.g. with a customer): anyone
  * with the link sees the design and its changes as they happen, but can't
  * edit. An optional PIN adds a second check. "New link" throws the old one
  * away; changing the PIN shuts out everyone let in with the old one.
+ *
+ * "Request approval" turns the link into the customer's sign-off: viewers
+ * approve or ask for changes with their name. A review counts for the
+ * revision it was given on; editing the design afterwards makes it out of
+ * date, and the viewer is asked again.
  */
 
 const PIN_PATTERN = /^[0-9]{4,8}$/;
@@ -40,20 +47,98 @@ function expiryText(share: ShareInfo): string {
   return share.expired ? `Expired on ${when(share.expiresAt)}` : `Expires ${when(share.expiresAt)}`;
 }
 
-export function ShareDialog({ designId, onClose }: { designId: string; onClose: () => void }) {
+/** The design's share state, kept fresh from live events. */
+function useShareState(designId: string): [ShareState | null, (state: ShareState) => void, boolean] {
   const [state, setState] = useState<ShareState | null>(null);
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(() => {
+    api.getShare(designId).then((next) => { setState(next); setFailed(false); }).catch(() => { setFailed(true); });
+  }, [designId]);
+  useEffect(() => {
+    load();
+    return onLive((event) => {
+      if ((event.type === "share.changed" && event.id === designId) || event.type === "reconnected") {
+        load();
+      }
+    });
+  }, [designId, load]);
+  return [state, setState, failed];
+}
+
+type ApprovalState = "approved" | "changes" | "waiting" | "outdated";
+
+/** Where the approval stands for the design's current revision. */
+function approvalState(share: ShareInfo, revision: number): { state: ApprovalState; review: ShareReview | null } {
+  const latest = share.reviews.at(-1) ?? null;
+  if (!latest) {
+    return { state: "waiting", review: null };
+  }
+  if (latest.revision < revision) {
+    return { state: latest.decision === "approved" ? "outdated" : "waiting", review: latest };
+  }
+  return { state: latest.decision, review: latest };
+}
+
+const APPROVAL_LABEL: Record<ApprovalState, string> = {
+  approved: "Approved",
+  changes: "Changes requested",
+  waiting: "Awaiting approval",
+  outdated: "Approved an older version",
+};
+
+/** The top-bar pill: shown while the design's link asks for approval. */
+export function ApprovalStatus({ designId, onOpen }: { designId: string; onOpen: () => void }) {
+  const [state] = useShareState(designId);
+  const revision = useEditorStore((s) => s.design?.revision ?? 0);
+  const share = state?.share;
+  if (!share?.approvalRequested) {
+    return null;
+  }
+  const { state: where, review } = approvalState(share, revision);
+  const by = review && (where === "approved" || where === "changes") ? ` · ${review.name}` : "";
+  return (
+    <button type="button" className={`approval-pill approval-${where}`} title="Open sharing and reviews" onClick={onOpen}>
+      {APPROVAL_LABEL[where]}
+      {by}
+    </button>
+  );
+}
+
+function ReviewList({ share, revision }: { share: ShareInfo; revision: number }) {
+  if (share.reviews.length === 0) {
+    return <p className="muted">No answer yet. Viewers see Approve and Request changes buttons.</p>;
+  }
+  return (
+    <ol className="review-list">
+      {[...share.reviews].reverse().map((review) => (
+        <li key={review.id} className={`review review-${review.decision}`}>
+          <div className="review-head">
+            <strong>{review.decision === "approved" ? "Approved" : "Changes requested"}</strong>
+            {" · "}
+            {review.name}
+            <span className="muted">
+              {" · "}
+              {when(review.at)}
+              {review.revision < revision ? " · on an older version" : ""}
+            </span>
+          </div>
+          {review.comment && <p className="review-comment">{review.comment}</p>}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function ShareDialog({ designId, onClose }: { designId: string; onClose: () => void }) {
+  const [state, setState, failed] = useShareState(designId);
+  const revision = useEditorStore((s) => s.design?.revision ?? 0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pin, setPin] = useState("");
   const [editingPin, setEditingPin] = useState(false);
   const [copied, setCopied] = useState(false);
   const [expiresInDays, setExpiresInDays] = useState<number | null>(null);
-
-  useEffect(() => {
-    api.getShare(designId).then(setState).catch(() => {
-      setError("Couldn't load the sharing settings.");
-    });
-  }, [designId]);
+  const [askApproval, setAskApproval] = useState(false);
 
   const share = state?.share ?? null;
   const url = share ? `${(state?.publicUrl ?? window.location.origin).replace(/\/+$/, "")}${share.path}` : "";
@@ -105,7 +190,8 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
           A read-only, live view of this design. People with the link see it, and your changes as you make them, but can't edit it.
         </p>
 
-        {!state && !error && <p className="muted">Loading…</p>}
+        {!state && !error && !failed && <p className="muted">Loading…</p>}
+        {failed && !state && <p className="form-error">Couldn't load the sharing settings.</p>}
 
         {state && !share && (
           <>
@@ -126,6 +212,10 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
                 ))}
               </select>
             </label>
+            <label className="share-check">
+              <input type="checkbox" checked={askApproval} onChange={(e) => { setAskApproval(e.target.checked); }} />
+              <span>Request approval: viewers can approve or ask for changes, with their name</span>
+            </label>
             <div className="dialog-actions">
               <button type="button" className="secondary" onClick={onClose}>
                 Cancel
@@ -135,7 +225,7 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
                 className="primary"
                 disabled={busy || (pin !== "" && !pinValid)}
                 onClick={() => {
-                  void run(() => api.saveShare(designId, { ...(pin ? { pin } : {}), expiresInDays }));
+                  void run(() => api.saveShare(designId, { ...(pin ? { pin } : {}), expiresInDays, approvalRequested: askApproval }));
                 }}
               >
                 {busy ? "Creating…" : "Create link"}
@@ -221,6 +311,20 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
                 ))}
               </select>
             </div>
+            <label className="share-check">
+              <input
+                type="checkbox"
+                checked={share.approvalRequested}
+                disabled={busy}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  void run(() => api.saveShare(designId, { approvalRequested: on }));
+                }}
+              />
+              <span>Request approval</span>
+            </label>
+            {(share.approvalRequested || share.reviews.length > 0) && <ReviewList share={share} revision={revision} />}
+
             <p className="muted share-viewed">
               {share.lastViewedAt ? `Last viewed ${ago(share.lastViewedAt)}` : "Not viewed yet"}
             </p>

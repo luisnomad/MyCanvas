@@ -195,6 +195,54 @@ describe("share links", () => {
     expect((await app.request(`${shared.path}/design`, request({ as: "public" }))).status).toBe(200);
   });
 
+  it("asks for approval: viewers approve or ask for changes with their name, tied to the revision they saw", async () => {
+    const { design } = await newDesign();
+    const base = (await share(design.id)).share?.path ?? "";
+    const view = async () => (await (await app.request(`${base}/design`, request({ as: "public" }))).json()) as {
+      design: Design;
+      approval: { requested: boolean; revision: number; latest: { name: string; decision: string; comment: string; revision: number } | null };
+    };
+    const review = (json: unknown) => app.request(`${base}/review`, request({ method: "POST", as: "public", json }));
+
+    // Not asked: no reviews accepted.
+    expect((await view()).approval).toMatchObject({ requested: false, latest: null });
+    let revision = (await view()).approval.revision;
+    expect((await review({ name: "Teresa", decision: "approved", revision })).status).toBe(403);
+
+    expect((await share(design.id, { approvalRequested: true })).share).toMatchObject({ approvalRequested: true, reviews: [] });
+    expect((await app.request(`/api/designs/${design.id}/share`, request({ method: "PUT", json: { approvalRequested: "yes" } }))).status).toBe(400);
+    expect((await view()).approval.requested).toBe(true);
+
+    // A name is required, and changes need a comment.
+    expect((await review({ name: " ", decision: "approved", revision })).status).toBe(400);
+    expect((await review({ name: "Teresa", decision: "maybe", revision })).status).toBe(400);
+    expect((await review({ name: "Teresa", decision: "changes", comment: "", revision })).status).toBe(400);
+
+    const asked = await review({ name: "Teresa", decision: "changes", comment: "Bigger logo", revision });
+    expect(asked.status).toBe(201);
+    expect((await view()).approval.latest).toMatchObject({ name: "Teresa", decision: "changes", comment: "Bigger logo", revision });
+
+    // The design changes: a review of the old version is refused, the new one is accepted.
+    await app.request(`${AGENT}/designs/${design.id}/ops`, request({
+      method: "POST",
+      as: "agent",
+      json: { ops: [{ op: "addLayer", layer: { type: "rect", x: 0, y: 0, width: 10, height: 10, fill: "#000000" } }] },
+    }));
+    await app.request(`${AGENT}/designs/${design.id}/lock`, request({ method: "DELETE", as: "agent" }));
+    const stale = await review({ name: "Teresa", decision: "approved", revision });
+    expect(stale.status).toBe(409);
+    revision = (await view()).approval.revision;
+    expect((await review({ name: "Teresa", decision: "approved", comment: "", revision })).status).toBe(201);
+
+    // The editor sees the whole history; a new link keeps it.
+    const info = (await (await app.request(`/api/designs/${design.id}/share`, request())).json()) as { share: { reviews: { decision: string; revision: number }[] } };
+    expect(info.share.reviews.map((r) => r.decision)).toEqual(["changes", "approved"]);
+    expect(info.share.reviews[1]?.revision).toBe(revision);
+    expect((await share(design.id, { newLink: true })).share).toMatchObject({ approvalRequested: true });
+    const fresh = (await (await app.request(`/api/designs/${design.id}/share`, request())).json()) as { share: { reviews: unknown[] } };
+    expect(fresh.share.reviews).toHaveLength(2);
+  });
+
   it("serves fonts CSS that points inside the link", async () => {
     const { design } = await newDesign();
     const base = (await share(design.id)).share?.path ?? "";

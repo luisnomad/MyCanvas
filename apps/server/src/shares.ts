@@ -9,6 +9,11 @@ import { dataDir, readJsonFile, writeJsonFile } from "./storage";
  * PIN adds a second check. "Throwing away" a link or changing its PIN
  * rotates the access key, so every open viewer has to start over.
  *
+ * A link can also ask for the customer's approval: whoever has it can
+ * approve the design or ask for changes, signing with their name. Each
+ * review remembers the design revision it was given on, so a later edit
+ * shows the approval is out of date and asks again.
+ *
  * Records live in one file for the whole server (data/shares.json), keyed
  * by token, because a viewer arrives with nothing but the token.
  */
@@ -29,6 +34,23 @@ export interface ShareRecord {
   expiresAt?: string;
   /** When a viewer last opened the design (at most once a minute). */
   lastViewedAt?: string;
+  /** The link asks viewers to approve the design or ask for changes. */
+  approvalRequested?: boolean;
+  /** Approvals and change requests, oldest first. */
+  reviews?: ShareReview[];
+}
+
+export type ReviewDecision = "approved" | "changes";
+
+export interface ShareReview {
+  id: string;
+  name: string;
+  decision: ReviewDecision;
+  /** What to change (required for "changes"), or a note with an approval. */
+  comment: string;
+  at: string;
+  /** The design revision the review was given on. */
+  revision: number;
 }
 
 /** What the editor sees about a design's link (never the PIN or key). */
@@ -40,6 +62,8 @@ export interface ShareInfo {
   expiresAt: string | null;
   expired: boolean;
   lastViewedAt: string | null;
+  approvalRequested: boolean;
+  reviews: ShareReview[];
 }
 
 export const PIN_PATTERN = /^[0-9]{4,8}$/;
@@ -95,6 +119,8 @@ export function shareInfo(record: ShareRecord, now = Date.now()): ShareInfo {
     expiresAt: record.expiresAt ?? null,
     expired: isExpired(record, now),
     lastViewedAt: record.lastViewedAt ?? null,
+    approvalRequested: record.approvalRequested === true,
+    reviews: record.reviews ?? [],
   };
 }
 
@@ -141,6 +167,8 @@ export interface ShareChange {
   newLink?: boolean;
   /** Link lifetime from now, in days (one of EXPIRY_DAYS); null never expires; undefined keeps it. */
   expiresInDays?: number | null;
+  /** Ask viewers to approve the design (or stop asking); undefined keeps it. */
+  approvalRequested?: boolean;
 }
 
 /** Creates the design's link or changes it; returns the record. */
@@ -163,6 +191,9 @@ export function saveShare(email: string, designId: string, change: ShareChange):
     } else if (change.expiresInDays !== undefined) {
       record.expiresAt = new Date(Date.now() + change.expiresInDays * DAY_MS).toISOString();
     }
+    if (change.approvalRequested !== undefined) {
+      record.approvalRequested = change.approvalRequested;
+    }
     // A new link or PIN shuts out everyone who was let in before.
     if (!record.accessKey || change.newLink || change.pin !== undefined) {
       record.accessKey = randomBytes(24).toString("hex");
@@ -183,6 +214,26 @@ export async function noteViewed(token: string, now = Date.now()): Promise<void>
     if (current) {
       current.lastViewedAt = new Date(now).toISOString();
     }
+  });
+}
+
+export const REVIEW_NAME_MAX = 80;
+export const REVIEW_COMMENT_MAX = 2000;
+/** Per link: enough for any real review round, a ceiling for a spammer. */
+export const REVIEWS_MAX = 200;
+
+export type ReviewInput = Pick<ShareReview, "name" | "decision" | "comment" | "revision">;
+
+/** Adds a review to the link; null when the link is gone or the list is full. */
+export function addReview(token: string, input: ReviewInput, now = Date.now()): Promise<ShareReview | null> {
+  return mutate((records) => {
+    const record = records[token];
+    if (!record || (record.reviews?.length ?? 0) >= REVIEWS_MAX) {
+      return null;
+    }
+    const review: ShareReview = { id: randomBytes(8).toString("hex"), ...input, at: new Date(now).toISOString() };
+    record.reviews = [...(record.reviews ?? []), review];
+    return review;
   });
 }
 
