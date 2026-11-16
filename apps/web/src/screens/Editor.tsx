@@ -5,7 +5,7 @@ import { ContextBar } from "../components/ContextBar";
 import { ContextMenu } from "../components/ContextMenu";
 import { AgentEditingBanner, LeaveLockedDialog, LockStatus } from "../components/DesignLock";
 import { ExportDialog } from "../components/ExportDialog";
-import { ShareDialog } from "../components/ShareDialog";
+import { ApprovalStatus, ShareDialog } from "../components/ShareDialog";
 import { Inspector } from "../components/Inspector";
 import { LayersPanel } from "../components/LayersPanel";
 import { LeftToolbar } from "../components/LeftToolbar";
@@ -418,6 +418,14 @@ export function Editor({ designId }: { designId: string }) {
           <FormatMenu />
           <SaveTemplateButton />
         </div>
+        {design && (
+          <ApprovalStatus
+            designId={design.id}
+            onOpen={() => {
+              setShowShare(true);
+            }}
+          />
+        )}
         <button
           type="button"
           className="secondary"

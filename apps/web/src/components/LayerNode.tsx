@@ -186,10 +186,13 @@ function TextNode({ layer, registerRef }: { layer: TextLayer } & LayerNodeProps)
   }, []);
 
   // Custom fonts can arrive after the text first drew (uploaded meanwhile):
-  // load and redraw again then.
+  // load and redraw again then. Konva measured the lines with the fallback
+  // font, so the measurement must be redone too: otherwise right/centre
+  // aligned lines keep the fallback widths and end ragged, past the box edge.
   const customFontsVersion = useCustomFontsVersion();
   useEffect(() => {
     void ensureFontLoaded(layer.fontFamily, layer.fontStyle).then(() => {
+      mainTextRef.current?._setTextData();
       refreshGlowCache();
       localRef.current?.getLayer()?.batchDraw();
       measureLines();

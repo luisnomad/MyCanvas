@@ -11,7 +11,10 @@ import {
   type ShareRecord,
   EXPIRY_DAYS,
   PIN_PATTERN,
+  REVIEW_COMMENT_MAX,
+  REVIEW_NAME_MAX,
   accessKeyMatches,
+  addReview,
   deleteShare,
   isExpired,
   notePinResult,
@@ -36,6 +39,8 @@ import { type Workspace, isSafeId, webDistDir, workspaceFor } from "./storage";
  *   /s/<token>              the viewer page (the web app)
  *   /s/<token>/design       the design, read-only
  *   /s/<token>/unlock       POST { pin } → sets the viewer cookie
+ *   /s/<token>/review       POST { name, decision, comment, revision } when
+ *                           the link asks for approval
  *   /s/<token>/events       live updates for this design only
  *   /s/<token>/assets/<f>   images the design uses
  *   /s/<token>/fonts.json, fonts.css, fonts/<f>   uploaded fonts
@@ -48,6 +53,16 @@ const COOKIE = "mycanvas_share";
 interface ShareRouteDeps {
   isSafeAssetFile: (file: string) => boolean;
   imageTypes: Record<string, string>;
+}
+
+/** What a viewer learns about the approval: whether it's asked, and the latest answer. */
+function approvalFor(record: ShareRecord, design: Design) {
+  const reviews = record.reviews ?? [];
+  return {
+    requested: record.approvalRequested === true,
+    revision: design.revision ?? 0,
+    latest: reviews.at(-1) ?? null,
+  };
 }
 
 function withoutThumbnails(design: Design): Design {
@@ -154,8 +169,13 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
     if (days !== undefined && days !== null && !(EXPIRY_DAYS as readonly unknown[]).includes(days)) {
       return c.json({ error: `expiresInDays must be ${EXPIRY_DAYS.join(", ")} or null` }, 400);
     }
+    const approval = body.approvalRequested;
+    if (approval !== undefined && typeof approval !== "boolean") {
+      return c.json({ error: "approvalRequested must be true or false" }, 400);
+    }
     const record = await saveShare(ws.email, id, {
       ...(pin === undefined ? {} : { pin }),
+      ...(approval === undefined ? {} : { approvalRequested: approval }),
       ...(days === undefined ? {} : { expiresInDays: days as number | null }),
       newLink: body.newLink === true,
     });
@@ -178,7 +198,45 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
       return found;
     }
     void noteViewed(found.record.token).catch(() => undefined);
-    return c.json({ design: withoutThumbnails(found.design) }, 200, noStore);
+    return c.json({ design: withoutThumbnails(found.design), approval: approvalFor(found.record, found.design) }, 200, noStore);
+  });
+
+  app.post("/s/:token/review", async (c) => {
+    const found = await viewer(c);
+    if (found instanceof Response) {
+      return found;
+    }
+    if (found.record.approvalRequested !== true) {
+      return c.json({ error: "This link doesn't ask for approval" }, 403, noStore);
+    }
+    const body = await jsonBody(c);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const comment = typeof body.comment === "string" ? body.comment.trim() : "";
+    const decision = body.decision;
+    if (!name || name.length > REVIEW_NAME_MAX) {
+      return c.json({ error: `Add your name (up to ${String(REVIEW_NAME_MAX)} characters)` }, 400, noStore);
+    }
+    if (decision !== "approved" && decision !== "changes") {
+      return c.json({ error: "decision must be \"approved\" or \"changes\"" }, 400, noStore);
+    }
+    if (decision === "changes" && !comment) {
+      return c.json({ error: "Say what should change" }, 400, noStore);
+    }
+    if (comment.length > REVIEW_COMMENT_MAX) {
+      return c.json({ error: `Keep the comment under ${String(REVIEW_COMMENT_MAX)} characters` }, 400, noStore);
+    }
+    // The review is for the version the viewer saw; if the design changed meanwhile, they must look again.
+    const current = found.design.revision ?? 0;
+    if (body.revision !== current) {
+      return c.json({ error: "The design changed while you were looking. Check the new version first.", stale: true }, 409, noStore);
+    }
+    const review = await addReview(found.record.token, { name, decision, comment, revision: current });
+    if (!review) {
+      return c.json({ error: "This link can't take more reviews" }, 429, noStore);
+    }
+    publish(found.ws, { type: "share.changed", id: found.record.designId });
+    const saved = await shareByToken(found.record.token);
+    return c.json({ review, approval: saved ? approvalFor(saved, found.design) : null }, 201, noStore);
   });
 
   app.post("/s/:token/unlock", async (c) => {

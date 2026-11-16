@@ -79,6 +79,20 @@ export interface ShareInfo {
   expired: boolean;
   /** When a viewer last opened it (to the minute), or null. */
   lastViewedAt: string | null;
+  /** The link asks viewers to approve the design. */
+  approvalRequested: boolean;
+  /** Approvals and change requests, oldest first. */
+  reviews: ShareReview[];
+}
+
+export interface ShareReview {
+  id: string;
+  name: string;
+  decision: "approved" | "changes";
+  comment: string;
+  at: string;
+  /** The design revision the review was given on. */
+  revision: number;
 }
 
 export interface ShareState {
@@ -146,7 +160,7 @@ export const api = {
   /** Every locked design (lock badges in the project list). */
   getShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`),
   /** Creates or changes the link: `pin` null removes it; `newLink` throws the old one away. */
-  saveShare: (id: string, change: { pin?: string | null; newLink?: boolean; expiresInDays?: number | null }) =>
+  saveShare: (id: string, change: { pin?: string | null; newLink?: boolean; expiresInDays?: number | null; approvalRequested?: boolean }) =>
     request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, jsonInit("PUT", change)),
   stopShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, { method: "DELETE" }),
   listLocks: () => request<DesignLock[]>("/api/locks"),
