@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { type ShareDownload, type ShareInfo, type ShareReview, type ShareState, api } from "../api";
 import { useEditorStore } from "../store/editorStore";
 import { onLive } from "../utils/live";
+import { ShareActivityLog } from "./ShareActivity";
 
 /*
  * Share a read-only, live view of the design (e.g. with a customer): anyone
@@ -408,6 +409,8 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
             {(share.approvalRequested || share.reviews.length > 0 || (state?.downloads?.length ?? 0) > 0) && (
               <ReviewList share={share} revision={revision} downloads={state?.downloads ?? []} />
             )}
+
+            <ShareActivityLog designId={designId} />
 
             <p className="muted share-viewed">
               {share.lastViewedAt ? `Last viewed ${ago(share.lastViewedAt)}` : "Not viewed yet"}

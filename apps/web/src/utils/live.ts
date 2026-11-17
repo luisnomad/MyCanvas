@@ -18,9 +18,10 @@ export type LiveEvent =
   | { type: "assets.changed" }
   | { type: "fonts.changed" }
   | { type: "share.changed"; id: string }
+  | { type: "share.activity"; id: string }
   | { type: "reconnected" };
 
-const EVENT_TYPES = ["design.updated", "design.created", "design.deleted", "design.thumbnail", "lock.changed", "assets.changed", "fonts.changed", "share.changed"];
+const EVENT_TYPES = ["design.updated", "design.created", "design.deleted", "design.thumbnail", "lock.changed", "assets.changed", "fonts.changed", "share.changed", "share.activity"];
 
 type Handler = (event: LiveEvent) => void;
 

@@ -63,6 +63,7 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
   const [chatId, setChatId] = useState("");
   const [webhookUrl, setWebhookUrl] = useState<SecretDraft>(EMPTY);
   const [topic, setTopic] = useState("");
+  const [notifyOnOpen, setNotifyOnOpen] = useState(true);
   const [webhookToken, setWebhookToken] = useState<SecretDraft>(EMPTY);
   const [busy, setBusy] = useState<"saving" | "testing" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +77,7 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
     setWebhookToken(EMPTY);
     setChatId(settings.telegram.chatId);
     setTopic(settings.webhook.topic);
+    setNotifyOnOpen(settings.notifyOnOpen);
   };
 
   useEffect(() => {
@@ -87,11 +89,13 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
   const change = (): NotificationSettingsChange => ({
     telegram: { botToken: secretChange(botToken), chatId },
     webhook: { url: secretChange(webhookUrl), topic, token: secretChange(webhookToken) },
+    notifyOnOpen,
   });
 
   const dirty = saved !== null && (
     secretChange(botToken) !== undefined || secretChange(webhookUrl) !== undefined || secretChange(webhookToken) !== undefined ||
-    chatId.trim() !== saved.telegram.chatId || topic.trim() !== saved.webhook.topic
+    chatId.trim() !== saved.telegram.chatId || topic.trim() !== saved.webhook.topic ||
+    notifyOnOpen !== saved.notifyOnOpen
   );
 
   const save = async (): Promise<boolean> => {
@@ -153,6 +157,15 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
               });
             }}
           >
+            <section className="notify-section">
+              <h3>When</h3>
+              <p className="muted notify-note">Always: approvals, change requests and downloads.</p>
+              <label className="share-check">
+                <input type="checkbox" checked={notifyOnOpen} onChange={(e) => { setNotifyOnOpen(e.target.checked); }} />
+                <span>Notify when a link is opened (first open by each new visitor, or a return after 30 min; at most one message per link every 10 min)</span>
+              </label>
+            </section>
+
             <section className="notify-section">
               <h3>Telegram</h3>
               <SecretField label="Bot token" saved={saved.telegram.botToken} draft={botToken} onChange={setBotToken} placeholder="123456789:AAH…" />

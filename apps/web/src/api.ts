@@ -141,6 +141,8 @@ export interface ShareState {
 export interface NotificationSettings {
   telegram: { botToken: string | null; chatId: string };
   webhook: { url: string | null; topic: string; token: string | null };
+  /** Message when a share link is opened (default on). */
+  notifyOnOpen: boolean;
   configured: boolean;
 }
 
@@ -148,11 +150,55 @@ export interface NotificationSettings {
 export interface NotificationSettingsChange {
   telegram?: { botToken?: string | null; chatId?: string | null };
   webhook?: { url?: string | null; topic?: string | null; token?: string | null };
+  notifyOnOpen?: boolean;
 }
 
 export interface NotificationTestResult {
   ok: boolean;
   results: { channel: "telegram" | "webhook"; ok: boolean; error?: string }[];
+}
+
+/** One event in a design's share activity (server: share-activity.ts). */
+export interface ShareActivityEvent {
+  id: string;
+  kind: "opened" | "pin-failed" | "preview" | "approved" | "changes" | "downloaded";
+  at: string;
+  /** "owner": you (editor or agent); "bot": a link preview. Neither counts as an open. */
+  audience: "visitor" | "owner" | "bot";
+  token: string;
+  revision: number;
+  visitorId: string | null;
+  /** Distinct-device key: the visitor id, else a hash of IP + browser. */
+  visitor: string;
+  ip: string | null;
+  country: string | null;
+  userAgent: string | null;
+  browser: string;
+  os: string;
+  device: "mobile" | "tablet" | "desktop" | "bot";
+  screen?: string;
+  views?: number;
+  pagesViewed?: number;
+  lastSeenAt?: string;
+  name?: string;
+  comment?: string;
+  sha256?: string;
+}
+
+export interface ShareActivity {
+  summary: {
+    opens: number;
+    visitors: number;
+    ips: number;
+    lastOpenAt: string | null;
+    previews: number;
+    ownerOpens: number;
+    approvals: number;
+    changes: number;
+    downloads: number;
+  };
+  /** Newest first. */
+  events: ShareActivityEvent[];
 }
 
 export interface CreateDesignInput {
@@ -216,6 +262,7 @@ export const api = {
   /** Creates or changes the link: `pin` null removes it; `newLink` throws the old one away. */
   saveShare: (id: string, change: { pin?: string | null; newLink?: boolean; expiresInDays?: number | null; approvalRequested?: boolean; language?: "es" | "en" }) =>
     request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, jsonInit("PUT", change)),
+  shareActivity: (id: string) => request<ShareActivity>(`/api/designs/${encodeURIComponent(id)}/share/activity`),
   stopShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, { method: "DELETE" }),
   listLocks: () => request<DesignLock[]>("/api/locks"),
   getLock: (id: string) => request<DesignLock | null>(`/api/designs/${encodeURIComponent(id)}/lock`),

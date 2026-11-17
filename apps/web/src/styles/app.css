@@ -1253,6 +1253,20 @@ input.color-hex:focus {
   justify-self: end;
 }
 
+/* Transparency: what the link records, small and out of the way. */
+.shared-privacy {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  max-width: 340px;
+}
+
+.shared-sheet .shared-privacy,
+.shared-pin .shared-privacy {
+  max-width: none;
+}
+
 .shared-language {
   display: inline-flex;
   padding: 2px;
@@ -1666,4 +1680,135 @@ input.color-hex:focus {
 
 .notify-fail {
   color: var(--danger);
+}
+
+/* Share activity timeline (components/ShareActivity) */
+.share-activity {
+  margin: 12px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.share-activity-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+
+.share-activity-summary {
+  font-size: 12px;
+}
+
+.share-activity-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
+.share-activity-filters select {
+  width: auto;
+  max-width: 100%;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.share-activity-mine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.share-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.share-activity-row {
+  display: flex;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.share-activity-row:first-child {
+  border-top: none;
+}
+
+.share-activity-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+  color: var(--text-secondary);
+}
+
+.activity-opened .share-activity-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.activity-approved .share-activity-icon,
+.activity-downloaded .share-activity-icon {
+  background: color-mix(in srgb, #1f9d55 16%, transparent);
+  color: #1f9d55;
+}
+
+.activity-changes .share-activity-icon {
+  background: color-mix(in srgb, #d97706 16%, transparent);
+  color: #d97706;
+}
+
+.activity-pin-failed .share-activity-icon {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.activity-muted {
+  opacity: 0.6;
+}
+
+.share-activity-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.share-activity-line {
+  display: flex;
+  gap: 2px;
+  align-items: baseline;
+}
+
+.share-activity-when {
+  margin-left: auto;
+  padding-left: 8px;
+  white-space: nowrap;
+}
+
+.share-activity-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-activity-comment {
+  white-space: pre-wrap;
 }
