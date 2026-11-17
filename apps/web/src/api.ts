@@ -137,6 +137,24 @@ export interface ShareState {
   downloads?: ShareDownload[];
 }
 
+/** Where share-link notifications go (server: notify.ts). Secrets come back masked ("••••1234") or null. */
+export interface NotificationSettings {
+  telegram: { botToken: string | null; chatId: string };
+  webhook: { url: string | null; topic: string; token: string | null };
+  configured: boolean;
+}
+
+/** Omitted keeps a field, "" or null clears it, a string replaces it. */
+export interface NotificationSettingsChange {
+  telegram?: { botToken?: string | null; chatId?: string | null };
+  webhook?: { url?: string | null; topic?: string | null; token?: string | null };
+}
+
+export interface NotificationTestResult {
+  ok: boolean;
+  results: { channel: "telegram" | "webhook"; ok: boolean; error?: string }[];
+}
+
 export interface CreateDesignInput {
   name?: string;
   aspectRatioId?: string;
@@ -244,6 +262,11 @@ export const api = {
   /** Rejects with ApiError 409 (body.usedIn) for images in use unless `force`. */
   deleteAsset: (file: string, force = false) =>
     request<{ ok: boolean }>(`/api/assets/${encodeURIComponent(file)}${force ? "?force=1" : ""}`, { method: "DELETE" }),
+  notificationSettings: () => request<NotificationSettings>("/api/settings/notifications"),
+  saveNotificationSettings: (change: NotificationSettingsChange) =>
+    request<NotificationSettings>("/api/settings/notifications", jsonInit("PUT", change)),
+  /** Sends a test message on every saved channel; ApiError 400 when none is set up. */
+  testNotifications: () => request<NotificationTestResult>("/api/settings/notifications/test", { method: "POST" }),
   aiSettings: () => request<AiSettings>("/api/ai/settings"),
   saveAiSettings: (input: AiSettingsInput) => request<AiSettings>("/api/ai/settings", jsonInit("PUT", input)),
   /** Also tests the connection: rejects with the provider's message when it can't connect. */

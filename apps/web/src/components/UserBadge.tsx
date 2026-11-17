@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type Me, api } from "../api";
 import { AiSettingsDialog } from "./ai/AiSettingsDialog";
+import { NotificationsDialog } from "./NotificationsDialog";
 
 let cached: Promise<Me> | null = null;
 
@@ -9,6 +10,7 @@ export function UserBadge() {
   const [me, setMe] = useState<Me | null>(null);
   const [open, setOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -69,6 +71,17 @@ export function UserBadge() {
           >
             AI settings…
           </button>
+          <button
+            type="button"
+            className="secondary user-menu-ai"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              setNotifyOpen(true);
+            }}
+          >
+            Notifications…
+          </button>
           {me.logoutUrl && (
             <a className="button-link user-menu-signout" href={me.logoutUrl} role="menuitem">
               Sign out
@@ -77,6 +90,7 @@ export function UserBadge() {
         </div>
       )}
       {aiOpen && <AiSettingsDialog onClose={() => { setAiOpen(false); }} />}
+      {notifyOpen && <NotificationsDialog onClose={() => { setNotifyOpen(false); }} />}
     </div>
   );
 }
