@@ -81,8 +81,17 @@ export interface ShareInfo {
   lastViewedAt: string | null;
   /** The link asks viewers to approve the design. */
   approvalRequested: boolean;
+  /** Language of the public page (Spanish by default). */
+  language: "es" | "en";
   /** Approvals and change requests, oldest first. */
   reviews: ShareReview[];
+}
+
+/** What the viewer ticked: the exact sign-off text shown, and its version. */
+export interface ShareAcknowledgement {
+  version: string;
+  language: "es" | "en";
+  text: string;
 }
 
 export interface ShareReview {
@@ -93,12 +102,39 @@ export interface ShareReview {
   at: string;
   /** The design revision the review was given on. */
   revision: number;
+  /** Approvals: the sign-off ticked, and where it came from. */
+  acknowledgement?: ShareAcknowledgement;
+  ip?: string;
+  userAgent?: string;
+}
+
+/** A download of the approved PDF from the link: proof of delivery (server: share-proofs.ts). */
+export interface ShareDownload {
+  id: string;
+  at: string;
+  token: string;
+  designId: string;
+  designName: string;
+  revision: number;
+  name: string;
+  acknowledgement: ShareAcknowledgement;
+  sha256: string;
+  bytes: number;
+  fileName: string;
+  reviewId: string;
+  ip: string | null;
+  forwardedFor: string | null;
+  realIp: string | null;
+  cfConnectingIp: string | null;
+  userAgent: string | null;
 }
 
 export interface ShareState {
   share: ShareInfo | null;
   /** The public host for links (MYCANVAS_PUBLIC_URL), when the server knows it. */
   publicUrl?: string | null;
+  /** Downloads of approved PDFs, oldest first (kept after the link stops). */
+  downloads?: ShareDownload[];
 }
 
 export interface CreateDesignInput {
@@ -160,7 +196,7 @@ export const api = {
   /** Every locked design (lock badges in the project list). */
   getShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`),
   /** Creates or changes the link: `pin` null removes it; `newLink` throws the old one away. */
-  saveShare: (id: string, change: { pin?: string | null; newLink?: boolean; expiresInDays?: number | null; approvalRequested?: boolean }) =>
+  saveShare: (id: string, change: { pin?: string | null; newLink?: boolean; expiresInDays?: number | null; approvalRequested?: boolean; language?: "es" | "en" }) =>
     request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, jsonInit("PUT", change)),
   stopShare: (id: string) => request<ShareState>(`/api/designs/${encodeURIComponent(id)}/share`, { method: "DELETE" }),
   listLocks: () => request<DesignLock[]>("/api/locks"),

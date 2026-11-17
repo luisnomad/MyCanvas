@@ -5,116 +5,265 @@ import { setHeadlessMode, useEditorStore } from "../store/editorStore";
 import { useViewSettings } from "../store/viewSettings";
 import { loadCustomFonts } from "../utils/custom-fonts";
 import { onLive } from "../utils/live";
+import { type ShareLanguage, SHARE_LANGUAGES, errorText, formatWhen, isShareLanguage, shareStrings } from "../utils/share-i18n";
 
 /*
  * A share link (/s/<token>): the design alone, read-only, for someone
  * outside MyCanvas. It draws with the editor's own canvas (so it is the
  * real design, not a render) and follows changes live.
  *
- * When the link asks for approval, a bar lets the viewer approve the design
- * or ask for changes, signing with their name (remembered on this device).
+ * When the link asks for approval, the viewer can approve the design or
+ * ask for changes, signing with their name (remembered on this device).
+ * Approving is a formal sign-off: they tick the sign-off text the server
+ * sends, and then download the approved PDF. Every download is logged on
+ * the server as proof of delivery.
+ *
+ * The page speaks the link's language (Spanish unless Luis picks English);
+ * the viewer can switch. On phones the design fills the screen and the
+ * controls live in a sheet behind one button.
  */
 
 type Status = "loading" | "pin" | "ready" | "gone" | "expired" | "error";
 
 interface Review { name: string; decision: "approved" | "changes"; comment: string; at: string; revision: number }
-interface Approval { requested: boolean; revision: number; latest: Review | null }
+interface Acknowledgement { version: string; language: ShareLanguage; text: string }
+interface Approval {
+  requested: boolean;
+  revision: number;
+  language?: ShareLanguage;
+  latest: Review | null;
+  acknowledgement?: Acknowledgement;
+  acknowledgements?: Partial<Record<ShareLanguage, Acknowledgement>>;
+  downloadable?: boolean;
+}
+
+type T = ReturnType<typeof shareStrings>;
 
 const NAME_KEY = "mycanvas.reviewerName";
+const MOBILE_QUERY = "(max-width: 640px)";
 
-function savedName(): string {
+function stored(key: string): string {
   try {
-    return localStorage.getItem(NAME_KEY) ?? "";
+    return localStorage.getItem(key) ?? "";
   } catch {
     return "";
   }
 }
 
-function rememberName(name: string): void {
+function store(key: string, value: string): void {
   try {
-    localStorage.setItem(NAME_KEY, name);
+    localStorage.setItem(key, value);
   } catch {
-    // Private window: the name just isn't remembered.
+    // Private window: it just isn't remembered.
   }
 }
 
-function when(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const onChange = () => { setMatches(list.matches); };
+    onChange();
+    list.addEventListener("change", onChange);
+    return () => { list.removeEventListener("change", onChange); };
+  }, [query]);
+  return matches;
 }
 
-/** The approval bar under the design. */
-function ApprovalBar({ base, approval, onDone }: { base: string; approval: Approval; onDone: (approval: Approval) => void }) {
-  const [decision, setDecision] = useState<Review["decision"] | null>(null);
-  const [name, setName] = useState(savedName);
+/** The file name the server picked (Content-Disposition, UTF-8 form first). */
+function fileNameFrom(res: Response, fallback: string): string {
+  const header = res.headers.get("content-disposition") ?? "";
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1]);
+    } catch {
+      // Fall through to the plain name.
+    }
+  }
+  return /filename="([^"]+)"/i.exec(header)?.[1] ?? fallback;
+}
+
+type Outcome = { ok: true } | { ok: false; error: string };
+
+/** Asks for the approved PDF and saves it. */
+async function downloadPdf(base: string, t: T, body: Record<string, unknown>): Promise<Outcome> {
+  try {
+    const res = await fetch(`${base}/download`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const json = (await res.json().catch(() => ({}))) as { code?: string };
+      return { ok: false, error: errorText(t, json.code, res.status) };
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileNameFrom(res, "design.pdf");
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: t.networkError };
+  }
+}
+
+type Mode = "approve" | "changes" | "download";
+
+/** Approve / request changes / download: the status line, the buttons and the forms. */
+function ApprovalPanel({ base, approval, language, onDone, inSheet }: {
+  base: string;
+  approval: Approval;
+  language: ShareLanguage;
+  onDone: (approval: Approval) => void;
+  inSheet: boolean;
+}) {
+  const t = shareStrings(language);
+  const [mode, setMode] = useState<Mode | null>(null);
+  const [name, setName] = useState(() => stored(NAME_KEY));
   const [comment, setComment] = useState("");
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"sending" | "downloading" | null>(null);
   const latest = approval.latest;
   const current = latest?.revision === approval.revision ? latest : null;
+  const ack = approval.acknowledgements?.[language] ?? approval.acknowledgement ?? null;
+  const downloadable = approval.downloadable === true;
 
-  const send = async () => {
-    if (!decision) {
+  const open = (next: Mode) => {
+    setMode(next);
+    setAgreed(false);
+    setError(null);
+    setNotice(null);
+  };
+
+  const signOff = () => ({ name: name.trim(), revision: approval.revision, acknowledged: agreed, ackVersion: ack?.version, language });
+
+  const download = async () => {
+    setBusy("downloading");
+    const result = await downloadPdf(base, t, signOff());
+    setBusy(null);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    setNotice(t.downloaded);
+    return true;
+  };
+
+  const submit = async () => {
+    if (!mode) {
       return;
     }
-    setSending(true);
     setError(null);
+    setNotice(null);
+    rememberName();
+    if (mode === "download") {
+      if (await download()) {
+        setMode(null);
+      }
+      return;
+    }
+    setBusy("sending");
     try {
       const res = await fetch(`${base}/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), decision, comment: comment.trim(), revision: approval.revision }),
+        body: JSON.stringify({ ...signOff(), decision: mode === "approve" ? "approved" : "changes", comment: comment.trim() }),
       });
-      const body = (await res.json().catch(() => ({}))) as { error?: string; approval?: Approval | null };
+      const body = (await res.json().catch(() => ({}))) as { code?: string; approval?: Approval | null };
       if (!res.ok) {
-        setError(body.error ?? "That didn't work. Try again.");
+        setError(errorText(t, body.code, res.status));
         return;
       }
-      rememberName(name.trim());
-      setDecision(null);
       setComment("");
       if (body.approval) {
         onDone(body.approval);
       }
     } catch {
-      setError("Couldn't send it. Check your connection and try again.");
+      setError(t.networkError);
+      return;
     } finally {
-      setSending(false);
+      setBusy(null);
     }
+    if (mode === "approve") {
+      // Approving and downloading go together: the file follows at once.
+      if (await download()) {
+        setMode(null);
+      } else {
+        // The approval stands; the download can be tried again from here.
+        setMode("download");
+        setNotice(t.approvedNowDownload);
+      }
+      return;
+    }
+    setMode(null);
   };
 
-  if (decision) {
-    const needsComment = decision === "changes";
+  function rememberName() {
+    store(NAME_KEY, name.trim());
+  }
+
+  const wrap = inSheet ? "shared-approval shared-approval-sheet" : "shared-approval";
+
+  if (mode) {
+    const needsComment = mode === "changes";
+    const needsAck = mode !== "changes";
+    const title = mode === "approve" ? t.approveTitle : mode === "changes" ? t.changesTitle : t.downloadTitle;
+    const submitLabel = busy === "downloading"
+      ? t.downloading
+      : busy === "sending" ? t.sending : mode === "approve" ? t.approveAndDownload : mode === "download" ? t.download : t.send;
     return (
       <form
-        className="shared-approval shared-approval-form"
+        className={`${wrap} shared-approval-form`}
         onSubmit={(e) => {
           e.preventDefault();
-          void send();
+          void submit();
         }}
       >
-        <strong>{decision === "approved" ? "Approve this design" : "Request changes"}</strong>
+        <strong>{title}</strong>
+        {notice && <p className="shared-notice" role="status">{notice}</p>}
         <input
           type="text"
-          aria-label="Your name"
-          placeholder="Your name"
+          aria-label={t.yourName}
+          placeholder={t.yourName}
           autoComplete="name"
           maxLength={80}
           value={name}
           onChange={(e) => { setName(e.target.value); }}
         />
-        <textarea
-          aria-label={needsComment ? "What should change" : "Comment (optional)"}
-          placeholder={needsComment ? "What should change?" : "Comment (optional)"}
-          maxLength={2000}
-          rows={needsComment ? 4 : 2}
-          value={comment}
-          onChange={(e) => { setComment(e.target.value); }}
-        />
+        {mode !== "download" && (
+          <textarea
+            aria-label={needsComment ? t.whatShouldChange : t.commentOptional}
+            placeholder={needsComment ? t.whatShouldChange : t.commentOptional}
+            maxLength={2000}
+            rows={needsComment ? 4 : 2}
+            value={comment}
+            onChange={(e) => { setComment(e.target.value); }}
+          />
+        )}
+        {needsAck && ack && (
+          <label className="shared-ack">
+            <input type="checkbox" checked={agreed} onChange={(e) => { setAgreed(e.target.checked); }} />
+            <span>{ack.text}</span>
+          </label>
+        )}
+        {mode === "download" && <p className="shared-hint">{t.fileHint}</p>}
         {error && <p className="shared-error" role="alert">{error}</p>}
         <div className="shared-approval-actions">
-          <button type="button" className="secondary" onClick={() => { setDecision(null); setError(null); }}>Cancel</button>
-          <button type="submit" className="primary" disabled={sending || !name.trim() || (needsComment && !comment.trim())}>
-            {sending ? "Sending…" : "Send"}
+          <button type="button" className="secondary" onClick={() => { setMode(null); setError(null); setNotice(null); }}>{t.cancel}</button>
+          <button
+            type="submit"
+            className="primary"
+            disabled={busy !== null || !name.trim() || (needsComment && !comment.trim()) || (needsAck && (!agreed || !ack))}
+          >
+            {submitLabel}
           </button>
         </div>
       </form>
@@ -122,26 +271,59 @@ function ApprovalBar({ base, approval, onDone }: { base: string; approval: Appro
   }
 
   return (
-    <div className="shared-approval">
+    <div className={wrap}>
       <span className="shared-approval-status">
         {current
           ? current.decision === "approved"
-            ? `Approved by ${current.name} · ${when(current.at)}`
-            : `Changes requested by ${current.name} · ${when(current.at)}`
+            ? t.approvedBy(current.name, formatWhen(current.at, language))
+            : t.changesBy(current.name, formatWhen(current.at, language))
           : latest
-            ? "Updated since the last review. Please take another look."
-            : "Your approval is requested."}
+            ? t.updatedSinceReview
+            : t.approvalRequested}
       </span>
+      {notice && <span className="shared-notice" role="status">{notice}</span>}
       <div className="shared-approval-actions">
-        <button type="button" className="secondary" onClick={() => { setDecision("changes"); }}>Request changes</button>
-        <button type="button" className="primary" onClick={() => { setDecision("approved"); }}>Approve</button>
+        <button type="button" className="secondary" onClick={() => { open("changes"); }}>{t.requestChanges}</button>
+        {downloadable
+          ? <button type="button" className="primary" onClick={() => { open("download"); }}>{t.download}</button>
+          : <button type="button" className="primary" onClick={() => { open("approve"); }}>{t.approve}</button>}
       </div>
     </div>
   );
 }
 
+function LanguageSwitch({ language, onChange, t }: { language: ShareLanguage; onChange: (language: ShareLanguage) => void; t: T }) {
+  return (
+    <div className="shared-language" role="group" aria-label={t.language}>
+      {SHARE_LANGUAGES.map((lang) => (
+        <button
+          key={lang}
+          type="button"
+          aria-pressed={lang === language}
+          lang={lang}
+          title={shareStrings(lang).languageName}
+          onClick={() => { onChange(lang); }}
+        >
+          {lang.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PageSwitcher({ index, total, onGo, t }: { index: number; total: number; onGo: (index: number) => void; t: T }) {
+  return (
+    <nav className="shared-pages" aria-label={t.pages}>
+      <button type="button" disabled={index === 0} aria-label={t.previousPage} onClick={() => { onGo(index - 1); }}>‹</button>
+      <span aria-label={t.pageOfLong(index + 1, total)}>{t.pageOf(index + 1, total)}</span>
+      <button type="button" disabled={index >= total - 1} aria-label={t.nextPage} onClick={() => { onGo(index + 1); }}>›</button>
+    </nav>
+  );
+}
+
 export function SharedView({ token }: { token: string }) {
   const base = `/s/${token}`;
+  const languageKey = `mycanvas.shareLanguage.${token}`;
   const design = useEditorStore((state) => state.design);
   const activePageId = useEditorStore((state) => state.activePageId);
   const [status, setStatus] = useState<Status>("loading");
@@ -150,8 +332,27 @@ export function SharedView({ token }: { token: string }) {
   const [pinError, setPinError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [approval, setApproval] = useState<Approval | null>(null);
+  const [linkLanguage, setLinkLanguage] = useState<ShareLanguage>("es");
+  const [chosenLanguage, setChosenLanguage] = useState<ShareLanguage | null>(() => {
+    const saved = stored(languageKey);
+    return isShareLanguage(saved) ? saved : null;
+  });
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const mobile = useMediaQuery(MOBILE_QUERY);
   const loadingRef = useRef(false);
   const againRef = useRef(false);
+  const swipeRef = useRef<{ x: number; y: number } | null>(null);
+  const language = chosenLanguage ?? linkLanguage;
+  const t = shareStrings(language);
+
+  const chooseLanguage = (next: ShareLanguage) => {
+    setChosenLanguage(next);
+    store(languageKey, next);
+  };
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
 
   /** Fetches the design (again); one request at a time, the latest wins. */
   const refresh = useCallback(async () => {
@@ -162,20 +363,21 @@ export function SharedView({ token }: { token: string }) {
     loadingRef.current = true;
     try {
       const res = await fetch(`${base}/design`, { cache: "no-store" });
-      if (res.status === 401) {
-        setStatus("pin");
-      } else if (res.status === 404) {
-        setStatus("gone");
-      } else if (res.status === 410) {
-        setStatus("expired");
-      } else if (!res.ok) {
-        setStatus("error");
-      } else {
+      if (res.ok) {
         const body = (await res.json()) as { design: Design; approval?: Approval };
         useEditorStore.getState().presentDesign(body.design);
         setApproval(body.approval ?? null);
-        document.title = body.design.name || "Shared design";
+        if (isShareLanguage(body.approval?.language)) {
+          setLinkLanguage(body.approval.language);
+        }
+        document.title = body.design.name || "MyCanvas";
         setStatus("ready");
+      } else {
+        const body = (await res.json().catch(() => ({}))) as { language?: unknown };
+        if (isShareLanguage(body.language)) {
+          setLinkLanguage(body.language);
+        }
+        setStatus(res.status === 401 ? "pin" : res.status === 404 ? "gone" : res.status === 410 ? "expired" : "error");
       }
     } catch {
       // Offline for a moment: keep showing what we have.
@@ -224,10 +426,15 @@ export function SharedView({ token }: { token: string }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
       if (e.key === "ArrowRight" || e.key === "PageDown") {
         goToPage(pageIndex + 1);
       } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
         goToPage(pageIndex - 1);
+      } else if (e.key === "Escape") {
+        setSheetOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -254,18 +461,25 @@ export function SharedView({ token }: { token: string }) {
         setStatus("expired");
         return;
       }
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setPinError(body.error ?? "That PIN isn't right");
+      const body = (await res.json().catch(() => ({}))) as { code?: string };
+      setPinError(errorText(t, body.code ?? (res.status === 429 ? "pin-locked" : "pin-wrong"), res.status));
     } catch {
-      setPinError("Couldn't check the PIN. Try again.");
+      setPinError(t.pinNetwork);
     } finally {
       setChecking(false);
     }
   };
 
+  const languageCorner = (
+    <div className="shared-message-language">
+      <LanguageSwitch language={language} onChange={chooseLanguage} t={t} />
+    </div>
+  );
+
   if (status === "pin") {
     return (
       <div className="shared-view shared-message">
+        {languageCorner}
         <form
           className="shared-pin"
           onSubmit={(e) => {
@@ -273,14 +487,14 @@ export function SharedView({ token }: { token: string }) {
             void unlock();
           }}
         >
-          <h1>This design is protected</h1>
-          <p>Enter the PIN you were given to see it.</p>
+          <h1>{t.pinTitle}</h1>
+          <p>{t.pinHelp}</p>
           <input
             type="password"
             inputMode="numeric"
             autoComplete="off"
             autoFocus
-            aria-label="PIN"
+            aria-label={t.pinLabel}
             maxLength={8}
             value={pin}
             onChange={(e) => {
@@ -289,7 +503,7 @@ export function SharedView({ token }: { token: string }) {
           />
           {pinError && <p className="shared-error" role="alert">{pinError}</p>}
           <button type="submit" className="primary" disabled={checking || pin.length < 4}>
-            {checking ? "Checking…" : "View design"}
+            {checking ? t.pinChecking : t.pinSubmit}
           </button>
         </form>
       </div>
@@ -299,41 +513,116 @@ export function SharedView({ token }: { token: string }) {
   if (status === "gone" || status === "expired" || status === "error" || status === "loading" || !design) {
     return (
       <div className="shared-view shared-message">
+        {status !== "loading" && languageCorner}
         <p>
           {status === "gone"
-            ? "This design isn't shared any more."
+            ? t.gone
             : status === "expired"
-              ? "This link has expired. Ask the person who shared it for a new one."
+              ? t.expired
               : status === "error"
-                ? "The design couldn't be loaded. Check your connection and reload the page."
-                : "Loading…"}
+                ? t.loadError
+                : t.loading}
         </p>
+      </div>
+    );
+  }
+
+  const approvalPanel = approval?.requested
+    ? (
+        <ApprovalPanel
+          base={base}
+          approval={approval}
+          language={language}
+          onDone={setApproval}
+          inSheet={mobile}
+        />
+      )
+    : null;
+
+  const canvas = (
+    <div className="shared-canvas" inert>
+      <CanvasStage design={design} scale={fit} onFitScale={setFit} fitMargin={mobile ? 16 : 48} />
+    </div>
+  );
+
+  if (mobile) {
+    // Waiting on the viewer: a dot on the button says there's something to do.
+    const pending = approval?.requested === true && !(approval.latest?.revision === approval.revision);
+    return (
+      <div className="shared-view shared-mobile">
+        <div
+          className="shared-stage"
+          onTouchStart={(e) => {
+            const touch = e.touches[0];
+            swipeRef.current = touch && e.touches.length === 1 ? { x: touch.clientX, y: touch.clientY } : null;
+          }}
+          onTouchEnd={(e) => {
+            const start = swipeRef.current;
+            const touch = e.changedTouches[0];
+            swipeRef.current = null;
+            if (!start || !touch) {
+              return;
+            }
+            const dx = touch.clientX - start.x;
+            const dy = touch.clientY - start.y;
+            if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+              goToPage(pageIndex + (dx < 0 ? 1 : -1));
+            }
+          }}
+        >
+          {canvas}
+        </div>
+        <button
+          type="button"
+          className="shared-fab"
+          aria-label={t.menu}
+          aria-expanded={sheetOpen}
+          aria-controls="shared-sheet"
+          onClick={() => { setSheetOpen(true); }}
+        >
+          {pages.length > 1 && <span className="shared-fab-pages">{t.pageOf(pageIndex + 1, pages.length)}</span>}
+          <span aria-hidden="true" className="shared-fab-icon">☰</span>
+          {pending && <span className="shared-fab-dot" aria-hidden="true" />}
+        </button>
+        {sheetOpen && (
+          <div className="shared-sheet-backdrop" onClick={() => { setSheetOpen(false); }}>
+            <div
+              id="shared-sheet"
+              className="shared-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label={t.menu}
+              onClick={(e) => { e.stopPropagation(); }}
+            >
+              <div className="shared-sheet-head">
+                <strong className="shared-sheet-title">{design.name || t.sharedDesign}</strong>
+                <button type="button" className="shared-sheet-close" aria-label={t.close} onClick={() => { setSheetOpen(false); }}>×</button>
+              </div>
+              {pages.length > 1 && <PageSwitcher index={pageIndex} total={pages.length} onGo={goToPage} t={t} />}
+              {approvalPanel}
+              <div className="shared-sheet-row">
+                <span>{t.language}</span>
+                <LanguageSwitch language={language} onChange={chooseLanguage} t={t} />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div className="shared-view">
-      {/* The page switcher sits at the bottom of the design area, above the approval bar. */}
+      {/* Page switcher and language sit in their own row under the design, so they never cover the page. */}
       <div className="shared-stage">
-        <div className="shared-canvas" inert>
-          <CanvasStage design={design} scale={fit} onFitScale={setFit} />
+        {canvas}
+        <div className="shared-toolbar">
+          <span />
+          {pages.length > 1 ? <PageSwitcher index={pageIndex} total={pages.length} onGo={goToPage} t={t} /> : <span />}
+          <LanguageSwitch language={language} onChange={chooseLanguage} t={t} />
         </div>
-        {pages.length > 1 && (
-          <nav className="shared-pages" aria-label="Pages">
-            <button type="button" disabled={pageIndex === 0} aria-label="Previous page" onClick={() => { goToPage(pageIndex - 1); }}>‹</button>
-            <span>
-              {pageIndex + 1}
-              {" "}
-              /
-              {" "}
-              {pages.length}
-            </span>
-            <button type="button" disabled={pageIndex >= pages.length - 1} aria-label="Next page" onClick={() => { goToPage(pageIndex + 1); }}>›</button>
-          </nav>
-        )}
       </div>
-      {approval?.requested && <ApprovalBar base={base} approval={approval} onDone={setApproval} />}
+      {approvalPanel}
     </div>
   );
 }

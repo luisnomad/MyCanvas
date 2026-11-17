@@ -31,6 +31,8 @@ interface CanvasStageProps {
   design: EditorDesign;
   scale: number;
   onFitScale: (fit: number) => void;
+  /** Space kept around the design when fitting it, in px (both sides together). */
+  fitMargin?: number;
 }
 
 let checkerDataUrl: string | null = null;
@@ -191,7 +193,7 @@ function bakeMiddleTransform(
   return false;
 }
 
-export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
+export function CanvasStage({ design, scale, onFitScale, fitMargin = 48 }: CanvasStageProps) {
   const selectedLayerIds = useEditorStore((state) => state.selectedLayerIds);
   const selectLayer = useEditorStore((state) => state.selectLayer);
   const setSelectedLayers = useEditorStore((state) => state.setSelectedLayers);
@@ -704,7 +706,7 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
     }
     const observer = new ResizeObserver(() => {
       const rect = el.getBoundingClientRect();
-      const fit = Math.min((rect.width - 48) / design.width, (rect.height - 48) / design.height);
+      const fit = Math.min((rect.width - fitMargin) / design.width, (rect.height - fitMargin) / design.height);
       if (Number.isFinite(fit) && fit > 0) {
         onFitScale(Math.min(4, Math.round(fit * 1000) / 1000));
       }
@@ -713,7 +715,7 @@ export function CanvasStage({ design, scale, onFitScale }: CanvasStageProps) {
     return () => {
       observer.disconnect();
     };
-  }, [design.width, design.height, onFitScale]);
+  }, [design.width, design.height, onFitScale, fitMargin]);
 
   // Attach the transformer to the selected nodes (detached while editing text
   // in place or panning frame content, so the frame doesn't fight the edit).
