@@ -533,6 +533,7 @@ describe("per-user notification settings", () => {
     expect(masked).toEqual({
       telegram: { botToken: "••••tsrq", chatId: "424242" },
       webhook: { url: "••••opic", topic: "mycanvas", token: "••••9876" },
+      notifyOnOpen: true,
       configured: true,
     });
     for (const res of [await settings(), await settings({ as: "agent" })]) {
@@ -634,5 +635,211 @@ describe("per-user notification settings", () => {
     expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe("Bearer tok-123");
     expect(JSON.parse(calls[0]?.init.body as string)).toMatchObject({ topic: "mycanvas", event: "share.downloaded", reviewer: "Ana", revision: 7, editorUrl: "https://canva.local/#/edit/abc123" });
     expect(redact("x tok-123 y", config)).toBe("x [redacted] y");
+  });
+});
+
+// ── Share activity: opens, previews, wrong PINs, timeline, open notifications ──
+
+const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1";
+const MAC_CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const WHATSAPP = "WhatsApp/2.24.21.80 A";
+const VISITOR_A = "a".repeat(32);
+const VISITOR_B = "b".repeat(32);
+const VISITOR_C = "c".repeat(32);
+
+interface ActivityEvent {
+  kind: string;
+  audience: string;
+  visitor: string;
+  visitorId: string | null;
+  ip: string | null;
+  country: string | null;
+  browser: string;
+  os: string;
+  device: string;
+  views?: number;
+  pagesViewed?: number;
+  name?: string;
+  sha256?: string;
+}
+interface ActivityBody {
+  summary: { opens: number; visitors: number; ips: number; lastOpenAt: string | null; previews: number; ownerOpens: number; approvals: number; changes: number; downloads: number };
+  events: ActivityEvent[];
+}
+
+describe("share activity", () => {
+  const sent: { url: string; text: string }[] = [];
+  const BOT = "666666:activity-owner-bot-token-abcdef";
+
+  beforeAll(async () => {
+    const { setNotifyFetch } = await import("./notify");
+    setNotifyFetch((url, init) => {
+      sent.push({ url, text: (JSON.parse(init.body as string) as { text: string }).text });
+      return Promise.resolve(new Response("{}"));
+    });
+    const { setSharePdfExporter } = await import("./share-routes");
+    setSharePdfExporter((_ws, design) => Promise.resolve(Buffer.from(`%PDF-1.7 fake ${design.id}`)));
+    expect((await app.request("/api/settings/notifications", request({ method: "PUT", json: { telegram: { botToken: BOT, chatId: "9" }, notifyOnOpen: true } }))).status).toBe(200);
+  });
+
+  afterEach(async () => {
+    sent.length = 0;
+    (await import("./share-routes")).resetOpenThrottle();
+  });
+
+  async function link(body: Record<string, unknown> = {}) {
+    const { design } = await newDesign();
+    await app.request(`${AGENT}/designs/${design.id}/ops`, request({ method: "POST", as: "agent", json: { ops: [{ op: "addPage" }, { op: "addPage" }] } }));
+    await app.request(`${AGENT}/designs/${design.id}/lock`, request({ method: "DELETE", as: "agent" }));
+    const base = (await share(design.id, body)).share?.path ?? "";
+    const open = (visitorId: string | null, headers: Record<string, string> = {}, as: "public" | "local" = "public", extra: Record<string, unknown> = {}) =>
+      app.request(`${base}/activity`, request({
+        method: "POST",
+        as: as === "public" ? "public" : undefined,
+        headers: { "user-agent": IPHONE, "cf-connecting-ip": "203.0.113.9", "cf-ipcountry": "ES", ...headers },
+        json: { type: "open", visitorId, screen: "390x844", touch: true, ...extra },
+      }));
+    const activity = async () => (await (await app.request(`${AGENT}/designs/${design.id}/share/activity`, request({ as: "agent" }))).json()) as ActivityBody;
+    return { design, base, open, activity };
+  }
+
+  it("reads browser, OS and device from the user agent, and spots link previews", async () => {
+    const { parseUserAgent, isBotAgent } = await import("./share-activity");
+    expect(parseUserAgent(IPHONE)).toEqual({ browser: "Safari", os: "iOS", device: "mobile" });
+    expect(parseUserAgent(MAC_CHROME)).toEqual({ browser: "Chrome", os: "macOS", device: "desktop" });
+    expect(parseUserAgent(MAC_CHROME, { touch: true })).toMatchObject({ os: "iPadOS", device: "tablet" });
+    expect(parseUserAgent("Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36")).toMatchObject({ os: "Android", device: "tablet" });
+    for (const ua of [WHATSAPP, "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)", "TelegramBot (like TwitterBot)", "facebookexternalhit/1.1 Facebot Twitterbot/1.0",
+      "Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 (via ggpht.com GoogleImageProxy)", "Mozilla/5.0 HeadlessChrome/131.0", "curl/8.4.0", ""]) {
+      expect(isBotAgent(ua)).toBe(true);
+    }
+    expect(isBotAgent(IPHONE)).toBe(false);
+  });
+
+  it("counts a reload by the same visitor within 30 minutes as the same open, with pages viewed", async () => {
+    const { base, open, activity } = await link();
+    expect((await open(VISITOR_A)).status).toBe(204);
+    expect((await open(VISITOR_A)).status).toBe(204);
+    for (const page of [1, 2, 1]) {
+      await app.request(`${base}/activity`, request({ method: "POST", as: "public", headers: { "user-agent": IPHONE, "cf-connecting-ip": "203.0.113.9" }, json: { type: "page", visitorId: VISITOR_A, page } }));
+    }
+    const { summary, events } = await activity();
+    expect(summary).toMatchObject({ opens: 1, visitors: 1, ips: 1 });
+    expect(events.filter((e) => e.kind === "opened")).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "opened", audience: "visitor", visitorId: VISITOR_A, ip: "203.0.113.9", country: "ES",
+      browser: "Safari", os: "iOS", device: "mobile", views: 2, pagesViewed: 3,
+    });
+
+    // Back after more than 30 minutes: a new open (a new session) of a known visitor.
+    const { recordOpen } = await import("./share-activity");
+    const { shareByToken } = await import("./shares");
+    const record = await shareByToken(base.slice(3));
+    const origin = { ip: "203.0.113.9", forwardedFor: null, realIp: null, cfConnectingIp: "203.0.113.9", userAgent: IPHONE };
+    const later = await recordOpen({ record: record!, revision: 1, origin, country: "ES", audience: "visitor", visitorId: VISITOR_A }, Date.now() + 31 * 60_000);
+    expect(later).toMatchObject({ opened: true, newVisitor: false });
+    expect((await activity()).summary).toMatchObject({ opens: 2, visitors: 1 });
+  });
+
+  it("counts distinct devices by visitor id, with distinct IPs as a second hint", async () => {
+    const { open, activity } = await link();
+    await open(VISITOR_A);
+    await open(VISITOR_B, { "cf-connecting-ip": "198.51.100.20", "user-agent": MAC_CHROME });
+    await open(VISITOR_C); // same IP as A: another device on the same network
+    await open(VISITOR_A); // a reload: not a new open
+    expect((await activity()).summary).toMatchObject({ opens: 3, visitors: 3, ips: 2 });
+  });
+
+  it("keeps the owner, the agent and link previews out of the counts and the notifications", async () => {
+    const { base, open, activity } = await link();
+    // The owner on the LAN route (signed in to the editor) and the agent token on the public host.
+    expect((await open(VISITOR_A, {}, "local")).status).toBe(204);
+    expect((await open(VISITOR_B, { authorization: `Bearer ${TOKEN}` })).status).toBe(204);
+    // Link previews: the script-less fetch of the page, and a headless browser that ran it.
+    await app.request(base, request({ as: "public", headers: { "user-agent": WHATSAPP, "cf-connecting-ip": "31.13.0.1" } }));
+    await app.request(base, request({ as: "public", headers: { "user-agent": WHATSAPP, "cf-connecting-ip": "31.13.0.1" } }));
+    await open(null, { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 HeadlessChrome/131.0 Safari/537.36" });
+    const { summary, events } = await activity();
+    expect(summary).toMatchObject({ opens: 0, visitors: 0, ownerOpens: 2, previews: 2 });
+    expect(events.filter((e) => e.kind === "opened").every((e) => e.audience === "owner")).toBe(true);
+    expect(events.filter((e) => e.kind === "preview").map((e) => e.device)).toEqual(["bot", "bot"]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(sent).toEqual([]);
+  });
+
+  it("notifies the first open by a new visitor, then holds further opens for 10 minutes", async () => {
+    const { design, open } = await link();
+    await open(VISITOR_A);
+    await vi.waitFor(() => { expect(sent).toHaveLength(1); });
+    expect(sent[0]?.url).toBe(`https://api.telegram.org/bot${BOT}/sendMessage`);
+    expect(sent[0]?.text).toContain("MyCanvas: \"Sponsor image\" was opened");
+    expect(sent[0]?.text).toContain("New visitor · phone · Safari on iOS · ES 203.0.113.9");
+    expect(sent[0]?.text).toContain(`/#/edit/${design.id}`);
+    await open(VISITOR_B, { "user-agent": MAC_CHROME });
+    await open(VISITOR_C);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(sent).toHaveLength(1);
+  });
+
+  it("throttles: one message per window, the held opens go out together", async () => {
+    const { OpenThrottle } = await import("./share-activity");
+    const out: string[][] = [];
+    let scheduled: (() => void) | null = null;
+    const throttle = new OpenThrottle<string>(600_000, (_key, items) => { out.push(items); }, (fn) => { scheduled = fn; return setTimeout(() => undefined, 0); });
+    throttle.submit("link", "first", 0);
+    throttle.submit("link", "second", 60_000);
+    throttle.submit("link", "third", 120_000);
+    throttle.submit("other", "elsewhere", 120_000);
+    expect(out).toEqual([["first"], ["elsewhere"]]);
+    expect(scheduled).not.toBeNull();
+    throttle.flush("link", 600_000);
+    expect(out.at(-1)).toEqual(["second", "third"]);
+    // A new window: the next open goes out at once.
+    throttle.submit("link", "fourth", 1_300_000);
+    expect(out.at(-1)).toEqual(["fourth"]);
+  });
+
+  it("sends nothing for opens when the owner turned it off", async () => {
+    const off = await app.request("/api/settings/notifications", request({ method: "PUT", json: { notifyOnOpen: false } }));
+    expect(await off.json()).toMatchObject({ notifyOnOpen: false, telegram: { chatId: "9" } });
+    try {
+      const { open, activity } = await link();
+      await open(VISITOR_A);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(sent).toEqual([]);
+      expect((await activity()).summary.opens).toBe(1);
+      expect((await app.request("/api/settings/notifications", request({ method: "PUT", json: { notifyOnOpen: "no" } }))).status).toBe(400);
+    } finally {
+      await app.request("/api/settings/notifications", request({ method: "PUT", json: { notifyOnOpen: true } }));
+    }
+  });
+
+  it("lists one merged timeline: opens, wrong PINs, change requests, approvals and downloads, kept after the link stops", async () => {
+    const { design, base, open, activity } = await link({ approvalRequested: true, pin: "1357" });
+    const wrong = await app.request(`${base}/unlock`, request({ method: "POST", as: "public", headers: { "user-agent": IPHONE, "cf-connecting-ip": "203.0.113.9" }, json: { pin: "0000", visitorId: VISITOR_A } }));
+    expect(wrong.status).toBe(401);
+    const unlocked = await app.request(`${base}/unlock`, request({ method: "POST", as: "public", json: { pin: "1357", visitorId: VISITOR_A } }));
+    const cookie = cookieFrom(unlocked);
+    const pub = (path: string, json: unknown) => app.request(`${base}/${path}`, request({ method: "POST", as: "public", cookie, headers: { "user-agent": IPHONE, "cf-connecting-ip": "203.0.113.9", "cf-ipcountry": "ES" }, json }));
+    // Without the PIN cookie the page can't report an open.
+    expect((await open(VISITOR_A)).status).toBe(401);
+    expect((await pub("activity", { type: "open", visitorId: VISITOR_A })).status).toBe(204);
+    const revision = ((await (await app.request(`${base}/design`, request({ as: "public", cookie }))).json()) as { approval: { revision: number } }).approval.revision;
+    expect((await pub("review", { name: "Ana", decision: "changes", comment: "Logo", revision, visitorId: VISITOR_A })).status).toBe(201);
+    expect((await pub("review", { name: "Ana", decision: "approved", revision, acknowledged: true, ackVersion: "1", visitorId: VISITOR_A })).status).toBe(201);
+    expect((await pub("download", { name: "Ana", revision, acknowledged: true, ackVersion: "1", visitorId: VISITOR_A })).status).toBe(200);
+
+    const { summary, events } = await activity();
+    expect(events.map((e) => e.kind)).toEqual(["downloaded", "approved", "changes", "opened", "pin-failed"]);
+    expect(summary).toMatchObject({ opens: 1, visitors: 1, approvals: 1, changes: 1, downloads: 1 });
+    expect(events.every((e) => e.visitorId === VISITOR_A)).toBe(true);
+    expect(events[0]).toMatchObject({ name: "Ana", country: "ES", device: "mobile" });
+    expect(events[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(events[2]).toMatchObject({ name: "Ana", ip: "203.0.113.9", browser: "Safari" });
+    // The editor sees the same; the log outlives the link.
+    expect((await (await app.request(`/api/designs/${design.id}/share/activity`, request())).json() as ActivityBody).events).toHaveLength(5);
+    await app.request(`/api/designs/${design.id}/share`, request({ method: "DELETE" }));
+    expect((await activity()).events.map((e) => e.kind)).toEqual(["downloaded", "approved", "changes", "opened", "pin-failed"]);
+    expect((await app.request(`${AGENT}/designs/${design.id}/share/activity`, request({ as: "public" }))).status).toBe(401);
   });
 });

@@ -4,12 +4,25 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type Design, allLayers } from "@mycanvas/shared";
-import { AGENT_BASE } from "./agent/routes";
+import { AGENT_BASE, hasAgentToken } from "./agent/routes";
 import { type AppEnv } from "./app";
+import { identify } from "./auth";
 import { readDesign } from "./designs";
 import { eventStream, publish } from "./events";
 import { fontFaceCss, isSafeFontFile, listFonts, readFontFile } from "./fonts";
-import { notify } from "./notify";
+import { type OpenInfo, notify } from "./notify";
+import {
+  type Audience,
+  OpenThrottle,
+  activityFor,
+  cleanVisitorId,
+  isBotAgent,
+  recordChanges,
+  recordOpen,
+  recordPage,
+  recordPinFailed,
+  recordPreview,
+} from "./share-activity";
 import { RendererUnavailable, runHeadless } from "./renderer";
 import { type ApprovalProof, type DownloadProof, appendProof, downloadCount, downloadsFor, requestOrigin } from "./share-proofs";
 import {
@@ -37,7 +50,7 @@ import {
   shareInfo,
   shareLanguage,
 } from "./shares";
-import { type Workspace, dataDir, isSafeId, webDistDir, workspaceFor } from "./storage";
+import { type Workspace, dataDir, isSafeId, webDistDir, workspaceFor, workspaceKey } from "./storage";
 
 /*
  * Share links (see shares.ts).
@@ -252,6 +265,49 @@ function grantAccess(c: Context, record: ShareRecord): void {
   });
 }
 
+/**
+ * Who is behind a public request: a link-preview bot (by user agent), the
+ * design's owner (signed in to the editor: the LAN route, or a Cloudflare
+ * Access session cookie on the public host; or the agent token), or a visitor.
+ */
+async function audienceOf(c: Context, record: ShareRecord): Promise<Audience> {
+  if (isBotAgent(c.req.header("user-agent") ?? null)) {
+    return "bot";
+  }
+  if (hasAgentToken(c.req.header("authorization"))) {
+    return "owner";
+  }
+  const jwt = c.req.header("cf-access-jwt-assertion") ?? getCookie(c, "CF_Authorization") ?? null;
+  const result = await identify({ get: (name: string) => (name.toLowerCase() === "cf-access-jwt-assertion" ? jwt : c.req.header(name) ?? null) });
+  return result.ok && workspaceKey(result.identity.email) === workspaceKey(record.email) ? "owner" : "visitor";
+}
+
+/** Cloudflare's two-letter country, when the request came through it. */
+function countryOf(c: Context): string | null {
+  const value = c.req.header("cf-ipcountry")?.trim().toUpperCase() ?? "";
+  return /^[A-Z]{2}$/.test(value) && value !== "XX" ? value : null;
+}
+
+/** "390x844" from the page. */
+function cleanScreen(value: unknown): string | undefined {
+  return typeof value === "string" && /^\d{2,5}x\d{2,5}$/.test(value) ? value : undefined;
+}
+
+/** "Link opened" messages: at most one per link every 10 minutes; opens in between go out together. */
+const OPEN_NOTICE_WINDOW_MS = 10 * 60_000;
+interface PendingOpen { ws: Workspace; designId: string; designName: string; revision: number; open: OpenInfo }
+const openThrottle = new OpenThrottle<PendingOpen>(OPEN_NOTICE_WINDOW_MS, (_token, items) => {
+  const last = items.at(-1);
+  if (last) {
+    void notify(last.ws, { kind: "opened", designId: last.designId, designName: last.designName, reviewer: "", revision: last.revision, opens: items.map((item) => item.open) });
+  }
+});
+
+/** Tests: forget held "link opened" messages. */
+export function resetOpenThrottle(): void {
+  openThrottle.reset();
+}
+
 export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): void {
   // ── Editor side ──────────────────────────────────────────────────────
   // The same three routes for the signed-in editor and for the agent API
@@ -265,6 +321,16 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
       }
       const record = await shareForDesign(c.get("ws").email, id);
       return c.json(await shareResponse(c.get("ws").email, id, record));
+    });
+
+    /** The design's share activity: opens, previews, wrong PINs, reviews and downloads, newest first. */
+    app.get(`${base}/:id/share/activity`, async (c) => {
+      const ws = c.get("ws");
+      const id = c.req.param("id");
+      if (!isSafeId(id) || !await readDesign(ws, id)) {
+        return c.json({ error: "Not found" }, 404);
+      }
+      return c.json(await activityFor(ws.email, id, await shareForDesign(ws.email, id)), 200, { "Cache-Control": "no-store" });
     });
 
     app.put(`${base}/:id/share`, async (c) => {
@@ -384,9 +450,24 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
         reviewId: added.review.id,
         decision,
         ...origin,
+        visitorId: cleanVisitorId(body.visitorId),
+        country: countryOf(c),
+      });
+    } else {
+      await recordChanges({
+        record: found.record,
+        revision: current,
+        origin,
+        country: countryOf(c),
+        audience: await audienceOf(c, found.record),
+        visitorId: cleanVisitorId(body.visitorId),
+        name,
+        comment,
+        reviewId: added.review.id,
       });
     }
     publish(found.ws, { type: "share.changed", id: found.record.designId });
+    publish(found.ws, { type: "share.activity", id: found.record.designId });
     void notify(found.ws, { kind: decision, designId: found.design.id, designName: found.design.name, reviewer: name, revision: current, ...(comment ? { comment } : {}) });
     return c.json({ review: added.review, approval: saved ? approvalFor(saved, found.design) : null }, 201, noStore);
   });
@@ -447,8 +528,11 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
       fileName,
       reviewId: approval.id,
       ...requestOrigin(c.req.raw.headers),
+      visitorId: cleanVisitorId(body.visitorId),
+      country: countryOf(c),
     });
     publish(ws, { type: "share.changed", id: design.id });
+    publish(ws, { type: "share.activity", id: design.id });
     void notify(ws, { kind: "downloaded", designId: design.id, designName: design.name, reviewer: name, revision: current, sha256 });
     return c.body(new Uint8Array(pdf), 200, {
       "Content-Type": "application/pdf",
@@ -456,6 +540,51 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
       "X-MyCanvas-Sha256": sha256,
       ...noStore,
     });
+  });
+
+  // The page's own report: it loaded the design ("open"), or showed a page for the first time ("page").
+  app.post("/s/:token/activity", async (c) => {
+    const found = await viewer(c);
+    if (found instanceof Response) {
+      return found;
+    }
+    const { record, ws, design } = found;
+    const body = await jsonBody(c);
+    const input = {
+      record,
+      revision: design.revision ?? 0,
+      origin: requestOrigin(c.req.raw.headers),
+      country: countryOf(c),
+      audience: await audienceOf(c, record),
+      visitorId: cleanVisitorId(body.visitorId),
+      screen: cleanScreen(body.screen),
+      touch: body.touch === true,
+    };
+    if (body.type === "page") {
+      const page = body.page;
+      if (typeof page === "number" && Number.isInteger(page) && page >= 0 && page < design.pages.length) {
+        await recordPage({ ...input, page });
+      }
+      return c.body(null, 204, noStore);
+    }
+    if (body.type !== "open") {
+      return c.json({ error: "type must be \"open\" or \"page\"" }, 400, noStore);
+    }
+    const result = await recordOpen(input);
+    if (result.line) {
+      publish(ws, { type: "share.activity", id: record.designId });
+    }
+    if (result.opened && result.line) {
+      const line = result.line;
+      openThrottle.submit(record.token, {
+        ws,
+        designId: design.id,
+        designName: design.name,
+        revision: design.revision ?? 0,
+        open: { at: line.at, newVisitor: result.newVisitor, device: line.device, browser: line.browser, os: line.os, ip: line.ip, country: line.country },
+      });
+    }
+    return c.body(null, 204, noStore);
   });
 
   app.post("/s/:token/unlock", async (c) => {
@@ -474,6 +603,17 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
     const ok = await pinMatches(record, pin);
     notePinResult(record.token, ok);
     if (!ok) {
+      const ws = await workspaceFor(record.email);
+      const design = await readDesign(ws, record.designId);
+      await recordPinFailed({
+        record,
+        revision: design?.revision ?? 0,
+        origin: requestOrigin(c.req.raw.headers),
+        country: countryOf(c),
+        audience: await audienceOf(c, record),
+        visitorId: cleanVisitorId(body.visitorId),
+      });
+      publish(ws, { type: "share.activity", id: record.designId });
       return c.json({ error: "That PIN isn't right", code: "pin-wrong" }, 401, noStore);
     }
     grantAccess(c, record);
@@ -551,6 +691,24 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
   // The viewer page itself: the built web app, which shows the design alone
   // for /s/<token> paths. (In dev, Vite serves it.)
   app.get("/s/:token", async (c) => {
+    // A link preview (WhatsApp, Slack, iMessage…) fetches only this page: note it, never as an open.
+    if (isBotAgent(c.req.header("user-agent") ?? null)) {
+      const record = await shareByToken(c.req.param("token"));
+      if (record && !isExpired(record)) {
+        const ws = await workspaceFor(record.email);
+        const line = await recordPreview({
+          record,
+          revision: (await readDesign(ws, record.designId))?.revision ?? 0,
+          origin: requestOrigin(c.req.raw.headers),
+          country: countryOf(c),
+          audience: "bot",
+          visitorId: null,
+        });
+        if (line) {
+          publish(ws, { type: "share.activity", id: record.designId });
+        }
+      }
+    }
     try {
       const html = await readFile(path.join(webDistDir, "index.html"), "utf8");
       return c.html(html, 200, noStore);

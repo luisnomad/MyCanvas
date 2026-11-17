@@ -37,6 +37,9 @@ interface ProofBase extends RequestOrigin {
   /** The viewer's name, as typed. */
   name: string;
   acknowledgement: Acknowledgement;
+  /** The page's visitor id and Cloudflare's country (entries since 2026-11-17). */
+  visitorId?: string | null;
+  country?: string | null;
 }
 
 export interface ApprovalProof extends ProofBase {

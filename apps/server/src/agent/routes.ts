@@ -49,6 +49,13 @@ function tokenMatches(given: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** The request carries the agent token (the owner's own tools; e.g. a share-link open by Claude). */
+export function hasAgentToken(authorization: string | undefined): boolean {
+  const expected = agentToken();
+  const given = /^Bearer\s+(.+)$/i.exec(authorization ?? "")?.[1]?.trim() ?? "";
+  return expected !== "" && tokenMatches(given, expected);
+}
+
 function agentLabel(c: Context): string {
   const label = c.req.header("x-mycanvas-agent")?.trim();
   return label !== undefined && label !== "" ? label.slice(0, 40) : "Claude";
