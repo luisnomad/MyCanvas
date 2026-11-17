@@ -5,8 +5,8 @@ import { onLive } from "../utils/live";
 /*
  * The design's share activity in the Share dialog: who opened the link and
  * when, from which device, plus wrong PINs, link previews, change requests,
- * approvals and downloads, from every link the design has had. In Spanish or
- * English after the browser's language. Your own opens (the editor, Claude)
+ * approvals and downloads, from every link the design has had. In the
+ * editor's language (English today). Your own opens (the editor, Claude)
  * and link previews are hidden unless asked for, and never counted.
  */
 
@@ -60,8 +60,14 @@ const ICON: Record<ShareActivityEvent["kind"], string> = {
   "downloaded": "↓",
 };
 
+/**
+ * The editor's own UI language. The editor is English and has no language
+ * setting yet, so this is English whatever the browser says (the public share
+ * page has its own, per-link language). The Spanish strings are ready for when
+ * the editor gets a locale setting.
+ */
 function editorLanguage(): Lang {
-  return navigator.language.toLowerCase().startsWith("es") ? "es" : "en";
+  return "en";
 }
 
 function relative(iso: string, lang: Lang, now = Date.now()): string {

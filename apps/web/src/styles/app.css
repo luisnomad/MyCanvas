@@ -1286,6 +1286,8 @@ input.color-hex:focus {
   padding: 6px 10px;
   border-radius: 999px;
   cursor: pointer;
+  /* The highlight must flip with the language, not fade after it (buttons animate their background). */
+  transition: none;
 }
 
 .shared-language button[aria-pressed="true"] {
