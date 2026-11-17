@@ -446,14 +446,83 @@ edit), `POST /api/designs/:id/lock/takeover`, `DELETE /api/designs/:id/lock`
 
 | method | path | what |
 |---|---|---|
-| GET | `/designs/:id/share` | `{ share, url }`: the link (or `null`), its full public `url`, and `share.reviews` (approvals and change requests, oldest first) |
-| PUT | `/designs/:id/share` | create or change the link: `{ pin?, expiresInDays?, approvalRequested?, newLink? }`. `pin` is 4–8 digits or `null` to remove; omitted = no PIN on a new link. `expiresInDays` is 1, 7, 30 or `null` (never). |
-| DELETE | `/designs/:id/share` | stop sharing |
+| GET | `/designs/:id/share` | `{ share, url, downloads }`: the link (or `null`), its full public `url`, `share.reviews` (approvals and change requests, oldest first), `share.language`, and `downloads` (every download of an approved PDF for this design, oldest first; kept after the link is stopped or replaced) |
+| PUT | `/designs/:id/share` | create or change the link: `{ pin?, expiresInDays?, approvalRequested?, language?, newLink? }`. `pin` is 4–8 digits or `null` to remove; omitted = no PIN on a new link. `expiresInDays` is 1, 7, 30 or `null` (never). `language` is `"es"` (default) or `"en"`: the language of the public page. |
+| DELETE | `/designs/:id/share` | stop sharing (the proof log stays) |
 
-Each review is `{ name, decision: "approved" | "changes", comment, at, revision }`.
+Each review is `{ id, name, decision: "approved" | "changes", comment, at, revision }`.
 A review whose `revision` is below the design's current revision was given on
-an older version. Creating a link does not send it to anyone: Claude only
-emails a link when Luis asks.
+an older version. Approvals made since 2026-11-17 also carry
+`acknowledgement: { version, language, text }` (the exact sign-off text the
+viewer ticked), `ip` and `userAgent`. The same person (name, ignoring case)
+approving the same revision again adds nothing; older links that stored such
+repeats show them as one (the stored records are not rewritten). Creating a
+link does not send it to anyone: Claude only emails a link when Luis asks.
+
+**Public page (Spanish by default).** `/s/<token>` speaks the link's
+`language` (records without one read as `es`); the viewer can switch ES/EN.
+On phones (≤ 640 px wide) the design fills the screen and the page switcher,
+approval, download and language live in a bottom sheet behind one button;
+the fitted design never sits under that button. Swiping left/right turns
+pages.
+
+**Sign-off and download.** On a link that asks for approval:
+
+- `GET /s/<token>/design` returns `approval: { requested, revision, language,
+  latest, acknowledgement, acknowledgements, downloadable }`. `latest` is only
+  `{ name, decision, comment, at, revision }` (never IP or browser).
+  `acknowledgement` is `{ version, language, text }`, for example (version
+  `"1"`): "Al aprobar y descargar, confirmo mi conformidad con este diseño en
+  su versión N y acepto que se considera entregado." `acknowledgements` has it
+  in every page language.
+- `POST /s/<token>/review` with `decision: "approved"` needs
+  `acknowledged: true` and `ackVersion` equal to the current version (else
+  400, `code: "acknowledgement"`). A change request needs no tick.
+- `POST /s/<token>/download` `{ name, revision, acknowledged: true,
+  ackVersion, language }` returns the PDF (`Content-Disposition: attachment`,
+  `X-MyCanvas-Sha256`). It is refused unless the latest review approves the
+  design's current revision (403 `not-approved`), and when `revision` is not
+  the current one (409 `stale`). Re-downloads are allowed; each one is logged.
+  At most 500 downloads per link.
+- The PDF is the editor's vector export (the same as `export.pdf`, scale 2),
+  made by the headless renderer once per approved revision and kept in
+  `data/share-pdfs/<workspace>/<design>-r<revision>.pdf`, so every download
+  of a revision is the very same file with the same SHA-256. If the design
+  changes while the PDF is being made, the download answers 409.
+- Errors carry a `code` (`acknowledgement`, `not-approved`, `stale`, `name`,
+  `comment`, `full`, `export`, `pin-wrong`, `pin-locked`) so the page shows
+  them in its own language. 401/410 responses carry the link's `language`.
+
+**Proof log.** `data/share-proofs.jsonl` is append-only, one JSON object per
+line, written before the PDF bytes are sent. A `download` entry holds:
+`id, at, kind, token, owner, designId, designName, revision, name,
+acknowledgement { version, language, text }, sha256, bytes, fileName,
+reviewId, ip, forwardedFor, realIp, cfConnectingIp, userAgent`. An
+`approval` entry holds the same minus the file fields, plus `decision`. `ip`
+is CF-Connecting-IP (set by Cloudflare), else the first X-Forwarded-For
+entry, else X-Real-IP (Traefik); the raw headers are kept beside it. The
+editor's Share dialog shows "Approved and downloaded by X · when · PDF sha …"
+under each approval. This is a record of what happened, not legal advice.
+
+### Notifications
+
+When a viewer approves, asks for changes or downloads the approved PDF, the
+server tells Luis. Set in Coolify (all optional; nothing is sent when unset):
+
+| env | what |
+|---|---|
+| `NOTIFY_TELEGRAM_BOT_TOKEN` | Telegram bot token (from @BotFather) |
+| `NOTIFY_TELEGRAM_CHAT_ID` | chat that receives the messages (Luis's own chat id) |
+| `NOTIFY_WEBHOOK_URL` | optional JSON POST: `{ event: "share.approved" \| "share.changes" \| "share.downloaded", title, message, click, design { id, name }, reviewer, revision, comment, sha256, editorUrl, at }` |
+| `NOTIFY_WEBHOOK_TOPIC` | optional: adds `topic` to the JSON, for ntfy (set `NOTIFY_WEBHOOK_URL` to the ntfy server root, e.g. `https://ntfy.sh/`) |
+| `NOTIFY_WEBHOOK_TOKEN` | optional: sent as `Authorization: Bearer …` |
+| `MYCANVAS_EDITOR_URL` | editor base for the link in the message (default `https://canva.local`) |
+
+The message names the design, the viewer, what they did, the revision, the
+comment or PDF SHA-256, and the editor link. Sending is fire and forget with a
+5 s timeout per channel; a failure is logged (secrets redacted) and never
+affects the viewer's request. A repeated approval sends nothing. Email (SMTP)
+is not built: the server has no mail library.
 
 ## A typical Claude session
 
