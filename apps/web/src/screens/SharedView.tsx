@@ -64,6 +64,11 @@ function store(key: string, value: string): void {
 }
 
 const VISITOR_KEY = "mycanvas.visitor";
+/** Set once the swipe hint has been dismissed on this device; it doesn't come back. */
+const SWIPE_HINT_KEY = "mycanvas.swipeHintSeen";
+/** How long the hint stays before fading by itself, and how long the fade takes (matches the CSS). */
+const SWIPE_HINT_MS = 3500;
+const SWIPE_HINT_FADE_MS = 400;
 let memoryVisitor: string | null = null;
 
 /** A random id for this device (first-party, this site only): counts distinct devices for the owner. */
@@ -477,6 +482,38 @@ export function SharedView({ token }: { token: string }) {
     }
   }, []);
 
+  // Phones with more than one page (where swiping turns pages): a small hint
+  // says so, once. It fades on the first swipe or page change, or after a few
+  // seconds, and is remembered on this device. Purely local: no activity report.
+  const [swipeHint, setSwipeHint] = useState<"hidden" | "shown" | "fading">("hidden");
+  const swipeHintPage = useRef<number | null>(null);
+  const multiPagePhone = status === "ready" && mobile && pages.length > 1;
+  const dismissSwipeHint = useCallback(() => {
+    setSwipeHint((current) => (current === "shown" ? "fading" : current));
+    store(SWIPE_HINT_KEY, "1");
+  }, []);
+  useEffect(() => {
+    if (multiPagePhone && swipeHintPage.current === null && stored(SWIPE_HINT_KEY) !== "1") {
+      swipeHintPage.current = pageIndex;
+      setSwipeHint("shown");
+    }
+  }, [multiPagePhone, pageIndex]);
+  useEffect(() => {
+    if (swipeHint === "shown" && swipeHintPage.current !== null && pageIndex !== swipeHintPage.current) {
+      dismissSwipeHint();
+    }
+  }, [swipeHint, pageIndex, dismissSwipeHint]);
+  useEffect(() => {
+    if (swipeHint === "hidden") {
+      return;
+    }
+    const timer = setTimeout(
+      swipeHint === "shown" ? dismissSwipeHint : () => { setSwipeHint("hidden"); },
+      swipeHint === "shown" ? SWIPE_HINT_MS : SWIPE_HINT_FADE_MS,
+    );
+    return () => { clearTimeout(timer); };
+  }, [swipeHint, dismissSwipeHint]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -620,24 +657,35 @@ export function SharedView({ token }: { token: string }) {
             const dx = touch.clientX - start.x;
             const dy = touch.clientY - start.y;
             if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+              dismissSwipeHint();
               goToPage(pageIndex + (dx < 0 ? 1 : -1));
             }
           }}
         >
           {canvas}
         </div>
-        <button
-          type="button"
-          className="shared-fab"
-          aria-label={t.menu}
-          aria-expanded={sheetOpen}
-          aria-controls="shared-sheet"
-          onClick={() => { setSheetOpen(true); }}
-        >
-          {pages.length > 1 && <span className="shared-fab-pages">{t.pageOf(pageIndex + 1, pages.length)}</span>}
-          <span aria-hidden="true" className="shared-fab-icon">☰</span>
-          {pending && <span className="shared-fab-dot" aria-hidden="true" />}
-        </button>
+        {/* One row along the bottom: the swipe hint takes what the menu button leaves, so they never overlap. */}
+        <div className="shared-mobile-bar">
+          {swipeHint !== "hidden" && pages.length > 1 && (
+            <div className="shared-swipe-hint" data-state={swipeHint} role="status">
+              <span className="shared-swipe-chevron" aria-hidden="true">‹</span>
+              <span className="shared-swipe-text">{t.swipeHint}</span>
+              <span className="shared-swipe-chevron" aria-hidden="true">›</span>
+            </div>
+          )}
+          <button
+            type="button"
+            className="shared-fab"
+            aria-label={t.menu}
+            aria-expanded={sheetOpen}
+            aria-controls="shared-sheet"
+            onClick={() => { dismissSwipeHint(); setSheetOpen(true); }}
+          >
+            {pages.length > 1 && <span className="shared-fab-pages">{t.pageOf(pageIndex + 1, pages.length)}</span>}
+            <span aria-hidden="true" className="shared-fab-icon">☰</span>
+            {pending && <span className="shared-fab-dot" aria-hidden="true" />}
+          </button>
+        </div>
         {sheetOpen && (
           <div className="shared-sheet-backdrop" onClick={() => { setSheetOpen(false); }}>
             <div

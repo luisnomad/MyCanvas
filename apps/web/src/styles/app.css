@@ -1344,10 +1344,23 @@ input.color-hex:focus {
   margin-bottom: calc(64px + env(safe-area-inset-bottom));
 }
 
-.shared-fab {
+/* The bottom row on phones: swipe hint (left, shrinks) and menu button (right). */
+.shared-mobile-bar {
   position: fixed;
+  left: 16px;
   right: 16px;
   bottom: calc(10px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.shared-fab {
+  position: relative;
+  flex: none;
+  margin-left: auto;
+  pointer-events: auto;
   height: 44px;
   min-width: 44px;
   padding: 0 14px;
@@ -1363,6 +1376,88 @@ input.color-hex:focus {
   font-size: 14px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+}
+
+/* Phone, several pages: "swipe to change page", once. In the band kept clear
+   under the design, left of the menu button, so it covers neither. */
+.shared-swipe-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-lift);
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 400ms ease;
+  /* backwards: once in, the animation lets go of opacity so the fade can run. */
+  animation: shared-swipe-in 300ms ease backwards;
+}
+
+.shared-swipe-hint[data-state="fading"] {
+  opacity: 0;
+}
+
+.shared-swipe-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shared-swipe-chevron {
+  flex: none;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--accent);
+  animation: shared-swipe-nudge 1.2s ease-in-out infinite;
+}
+
+.shared-swipe-chevron:last-child {
+  animation-name: shared-swipe-nudge-right;
+}
+
+@keyframes shared-swipe-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes shared-swipe-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  50% {
+    transform: translateX(-3px);
+  }
+}
+
+@keyframes shared-swipe-nudge-right {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  50% {
+    transform: translateX(3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shared-swipe-hint,
+  .shared-swipe-chevron {
+    animation: none;
+    transition: none;
+  }
 }
 
 .shared-fab-icon {
