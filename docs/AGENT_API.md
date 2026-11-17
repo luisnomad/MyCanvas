@@ -507,16 +507,31 @@ under each approval. This is a record of what happened, not legal advice.
 ### Notifications
 
 When a viewer approves, asks for changes or downloads the approved PDF, the
-server tells Luis. Set in Coolify (all optional; nothing is sent when unset):
+server tells the **owner of the shared design**, using that person's own
+settings. Each person sets them in the editor (user menu → Notifications),
+and Claude can read or set them here. Without settings, nothing is sent.
 
-| env | what |
-|---|---|
-| `NOTIFY_TELEGRAM_BOT_TOKEN` | Telegram bot token (from @BotFather) |
-| `NOTIFY_TELEGRAM_CHAT_ID` | chat that receives the messages (Luis's own chat id) |
-| `NOTIFY_WEBHOOK_URL` | optional JSON POST: `{ event: "share.approved" \| "share.changes" \| "share.downloaded", title, message, click, design { id, name }, reviewer, revision, comment, sha256, editorUrl, at }` |
-| `NOTIFY_WEBHOOK_TOPIC` | optional: adds `topic` to the JSON, for ntfy (set `NOTIFY_WEBHOOK_URL` to the ntfy server root, e.g. `https://ntfy.sh/`) |
-| `NOTIFY_WEBHOOK_TOKEN` | optional: sent as `Authorization: Bearer …` |
-| `MYCANVAS_EDITOR_URL` | editor base for the link in the message (default `https://canva.local`) |
+| method | path | what |
+|---|---|---|
+| GET | `/settings/notifications` | `{ telegram: { botToken, chatId }, webhook: { url, topic, token }, configured }`. Secrets come back masked (`"••••1234"`) or `null`, never in full. |
+| PUT | `/settings/notifications` | `{ telegram?: { botToken?, chatId? }, webhook?: { url?, topic?, token? } }`: an omitted field is kept, `""` or `null` clears it, a string replaces it. Returns the masked settings. 400 for a malformed bot token, chat ID or URL. |
+| POST | `/settings/notifications/test` | sends a test message on every saved channel: `{ ok, results: [{ channel: "telegram" \| "webhook", ok, error? }] }`; 400 when nothing is set up. |
+
+The editor uses the same routes under `/api/settings/notifications`.
+
+- Storage: `data/users/<workspace>/notifications.json`. The bot token, webhook
+  URL and webhook token are encrypted with `MYCANVAS_SECRET_KEY` (the same
+  scheme as AI keys, secrets.ts); the chat ID and topic are plain.
+- Telegram: bot token from @BotFather (`/newbot`), and the chat ID of the
+  person who wrote to the bot first (@userinfobot, or `chat.id` from
+  `getUpdates`).
+- Webhook: a JSON POST `{ event: "share.approved" \| "share.changes" \|
+  "share.downloaded" \| "share.test", title, message, click, design { id, name },
+  reviewer, revision, comment, sha256, editorUrl, at }`, plus `topic` when set
+  (ntfy JSON publishing: point the URL at the server root, e.g.
+  `https://ntfy.sh/`), and `Authorization: Bearer <token>` when set.
+- `MYCANVAS_EDITOR_URL` (env, optional) is the editor base for the link in the
+  message (default `https://canva.local`).
 
 The message names the design, the viewer, what they did, the revision, the
 comment or PDF SHA-256, and the editor link. Sending is fire and forget with a
