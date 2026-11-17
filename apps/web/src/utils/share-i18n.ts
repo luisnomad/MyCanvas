@@ -64,6 +64,7 @@ const es = {
   menu: "Opciones",
   close: "Cerrar",
   fileHint: "El PDF es la versión aprobada, igual que la que ves.",
+  swipeHint: "Desliza para cambiar de página",
   privacyNotice: "Este enlace registra aperturas, aprobaciones y descargas (fecha, IP y dispositivo) para el propietario del diseño.",
 };
 
@@ -121,6 +122,7 @@ const en: Strings = {
   menu: "Options",
   close: "Close",
   fileHint: "The PDF is the approved version, the same as you see here.",
+  swipeHint: "Swipe to change page",
   privacyNotice: "This link records opens, approvals and downloads (date, IP and device) for the design's owner.",
 };
 
