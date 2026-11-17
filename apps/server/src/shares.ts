@@ -38,9 +38,43 @@ export interface ShareRecord {
   approvalRequested?: boolean;
   /** Approvals and change requests, oldest first. */
   reviews?: ShareReview[];
+  /** Language of the public page; absent on older links, which read as "es". */
+  language?: ShareLanguage;
 }
 
 export type ReviewDecision = "approved" | "changes";
+export type ShareLanguage = "es" | "en";
+export const SHARE_LANGUAGES: readonly ShareLanguage[] = ["es", "en"];
+export const DEFAULT_SHARE_LANGUAGE: ShareLanguage = "es";
+
+/**
+ * The sign-off the viewer ticks before approving or downloading. The text
+ * lives here, not in the page, so the record holds exactly what was shown;
+ * changing the wording means a new version.
+ */
+export const ACK_VERSION = "1";
+
+export interface Acknowledgement {
+  version: string;
+  language: ShareLanguage;
+  /** The exact text shown, with the revision filled in. */
+  text: string;
+}
+
+export function acknowledgementText(language: ShareLanguage, revision: number): string {
+  const n = String(revision);
+  return language === "en"
+    ? `By approving and downloading, I confirm my formal sign-off (conformidad) on this design as of version ${n} and accept that it is considered delivered.`
+    : `Al aprobar y descargar, confirmo mi conformidad con este diseño en su versión ${n} y acepto que se considera entregado.`;
+}
+
+export function acknowledgement(language: ShareLanguage, revision: number): Acknowledgement {
+  return { version: ACK_VERSION, language, text: acknowledgementText(language, revision) };
+}
+
+export function shareLanguage(record: Pick<ShareRecord, "language">): ShareLanguage {
+  return record.language ?? DEFAULT_SHARE_LANGUAGE;
+}
 
 export interface ShareReview {
   id: string;
@@ -51,6 +85,11 @@ export interface ShareReview {
   at: string;
   /** The design revision the review was given on. */
   revision: number;
+  /** What the viewer ticked before approving (approvals since 2026-11-17). */
+  acknowledgement?: Acknowledgement;
+  /** Where the approval came from (approvals since 2026-11-17; never shown to viewers). */
+  ip?: string;
+  userAgent?: string;
 }
 
 /** What the editor sees about a design's link (never the PIN or key). */
@@ -63,6 +102,7 @@ export interface ShareInfo {
   expired: boolean;
   lastViewedAt: string | null;
   approvalRequested: boolean;
+  language: ShareLanguage;
   reviews: ShareReview[];
 }
 
@@ -120,8 +160,33 @@ export function shareInfo(record: ShareRecord, now = Date.now()): ShareInfo {
     expired: isExpired(record, now),
     lastViewedAt: record.lastViewedAt ?? null,
     approvalRequested: record.approvalRequested === true,
-    reviews: record.reviews ?? [],
+    language: shareLanguage(record),
+    reviews: collapseRepeats(record.reviews ?? []),
   };
+}
+
+function sameReviewer(a: ShareReview, b: Pick<ShareReview, "name">): boolean {
+  return a.name.trim().toLowerCase() === b.name.trim().toLowerCase();
+}
+
+/**
+ * The same person approving the same revision again in a row reads as one
+ * approval (older links stored every click). The one with the sign-off
+ * text wins; otherwise the first.
+ */
+export function collapseRepeats(reviews: ShareReview[]): ShareReview[] {
+  const out: ShareReview[] = [];
+  for (const review of reviews) {
+    const last = out.at(-1);
+    if (last && review.decision === "approved" && last.decision === "approved" && last.revision === review.revision && sameReviewer(last, review)) {
+      if (!last.acknowledgement && review.acknowledgement) {
+        out[out.length - 1] = review;
+      }
+      continue;
+    }
+    out.push(review);
+  }
+  return out;
 }
 
 async function hashPin(pin: string): Promise<string> {
@@ -169,6 +234,8 @@ export interface ShareChange {
   expiresInDays?: number | null;
   /** Ask viewers to approve the design (or stop asking); undefined keeps it. */
   approvalRequested?: boolean;
+  /** Language of the public page; undefined keeps it. */
+  language?: ShareLanguage;
 }
 
 /** Creates the design's link or changes it; returns the record. */
@@ -193,6 +260,9 @@ export function saveShare(email: string, designId: string, change: ShareChange):
     }
     if (change.approvalRequested !== undefined) {
       record.approvalRequested = change.approvalRequested;
+    }
+    if (change.language !== undefined) {
+      record.language = change.language;
     }
     // A new link or PIN shuts out everyone who was let in before.
     if (!record.accessKey || change.newLink || change.pin !== undefined) {
@@ -222,19 +292,40 @@ export const REVIEW_COMMENT_MAX = 2000;
 /** Per link: enough for any real review round, a ceiling for a spammer. */
 export const REVIEWS_MAX = 200;
 
-export type ReviewInput = Pick<ShareReview, "name" | "decision" | "comment" | "revision">;
+export type ReviewInput = Pick<ShareReview, "name" | "decision" | "comment" | "revision" | "acknowledgement" | "ip" | "userAgent">;
 
-/** Adds a review to the link; null when the link is gone or the list is full. */
-export function addReview(token: string, input: ReviewInput, now = Date.now()): Promise<ShareReview | null> {
+/**
+ * Adds a review to the link; null when the link is gone or the list is full.
+ * The same person approving the same revision again (the latest review
+ * already being their signed-off approval of it) adds nothing: the existing
+ * review comes back with `repeat: true`.
+ */
+export function addReview(token: string, input: ReviewInput, now = Date.now()): Promise<{ review: ShareReview; repeat: boolean } | null> {
   return mutate((records) => {
     const record = records[token];
-    if (!record || (record.reviews?.length ?? 0) >= REVIEWS_MAX) {
+    if (!record) {
+      return null;
+    }
+    const latest = record.reviews?.at(-1);
+    if (
+      latest && input.decision === "approved" && latest.decision === "approved" &&
+      latest.revision === input.revision && latest.acknowledgement && sameReviewer(latest, input)
+    ) {
+      return { review: latest, repeat: true };
+    }
+    if ((record.reviews?.length ?? 0) >= REVIEWS_MAX) {
       return null;
     }
     const review: ShareReview = { id: randomBytes(8).toString("hex"), ...input, at: new Date(now).toISOString() };
     record.reviews = [...(record.reviews ?? []), review];
-    return review;
+    return { review, repeat: false };
   });
+}
+
+/** The latest review, when it approves the given revision (what unlocks the download). */
+export function approvalOf(record: ShareRecord, revision: number): ShareReview | null {
+  const latest = record.reviews?.at(-1);
+  return latest?.decision === "approved" && latest.revision === revision ? latest : null;
 }
 
 /** Stops sharing the design; returns the removed record, if any. */

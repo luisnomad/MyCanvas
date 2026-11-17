@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { type ShareInfo, type ShareReview, type ShareState, api } from "../api";
+import { type ShareDownload, type ShareInfo, type ShareReview, type ShareState, api } from "../api";
 import { useEditorStore } from "../store/editorStore";
 import { onLive } from "../utils/live";
 
@@ -12,10 +12,19 @@ import { onLive } from "../utils/live";
  * "Request approval" turns the link into the customer's sign-off: viewers
  * approve or ask for changes with their name. A review counts for the
  * revision it was given on; editing the design afterwards makes it out of
- * date, and the viewer is asked again.
+ * date, and the viewer is asked again. Approving means ticking a sign-off
+ * text; the viewer then downloads the approved PDF, and each download is
+ * logged (name, text, revision, PDF SHA-256, IP, browser) as proof.
+ *
+ * The public page is in Spanish unless the link is set to English.
  */
 
 const PIN_PATTERN = /^[0-9]{4,8}$/;
+const LANGUAGE_CHOICES: { label: string; value: "es" | "en" }[] = [
+  { label: "Spanish", value: "es" },
+  { label: "English", value: "en" },
+];
+
 const EXPIRY_CHOICES: { label: string; days: number | null }[] = [
   { label: "Never", days: null },
   { label: "In 1 day", days: 1 },
@@ -104,27 +113,79 @@ export function ApprovalStatus({ designId, onOpen }: { designId: string; onOpen:
   );
 }
 
-function ReviewList({ share, revision }: { share: ShareInfo; revision: number }) {
-  if (share.reviews.length === 0) {
+function shortSha(sha: string): string {
+  return `${sha.slice(0, 12)}…`;
+}
+
+function DownloadLine({ download }: { download: ShareDownload }) {
+  return (
+    <li className="review-download" title={`SHA-256 ${download.sha256}\nIP ${download.ip ?? "unknown"}\n${download.userAgent ?? ""}\n${download.acknowledgement.text}`}>
+      Downloaded by
+      {" "}
+      {download.name}
+      {" · "}
+      {when(download.at)}
+      {" · PDF sha "}
+      <code>{shortSha(download.sha256)}</code>
+      {download.ip ? ` · ${download.ip}` : ""}
+    </li>
+  );
+}
+
+function ReviewList({ share, revision, downloads }: { share: ShareInfo; revision: number; downloads: ShareDownload[] }) {
+  if (share.reviews.length === 0 && downloads.length === 0) {
     return <p className="muted">No answer yet. Viewers see Approve and Request changes buttons.</p>;
   }
+  const byReview = new Map<string, ShareDownload[]>();
+  for (const download of downloads) {
+    byReview.set(download.reviewId, [...(byReview.get(download.reviewId) ?? []), download]);
+  }
+  const shown = new Set(share.reviews.map((review) => review.id));
+  // Downloads whose approval isn't in the list (an older link, or a repeat folded away).
+  const loose = downloads.filter((download) => !shown.has(download.reviewId));
   return (
     <ol className="review-list">
-      {[...share.reviews].reverse().map((review) => (
-        <li key={review.id} className={`review review-${review.decision}`}>
-          <div className="review-head">
-            <strong>{review.decision === "approved" ? "Approved" : "Changes requested"}</strong>
-            {" · "}
-            {review.name}
-            <span className="muted">
+      {[...share.reviews].reverse().map((review) => {
+        const taken = byReview.get(review.id) ?? [];
+        const first = taken[0];
+        return (
+          <li key={review.id} className={`review review-${review.decision}`}>
+            <div className="review-head">
+              <strong>
+                {review.decision === "approved" ? (first ? "Approved and downloaded" : "Approved") : "Changes requested"}
+              </strong>
               {" · "}
-              {when(review.at)}
-              {review.revision < revision ? " · on an older version" : ""}
-            </span>
-          </div>
-          {review.comment && <p className="review-comment">{review.comment}</p>}
+              {review.name}
+              <span className="muted">
+                {" · "}
+                {when(review.at)}
+                {review.revision < revision ? " · on an older version" : ""}
+                {` · v${String(review.revision)}`}
+              </span>
+            </div>
+            {review.comment && <p className="review-comment">{review.comment}</p>}
+            {review.acknowledgement && (
+              <p className="review-ack muted" title={review.acknowledgement.text}>
+                Signed off
+                {review.ip ? ` from ${review.ip}` : ""}
+              </p>
+            )}
+            {taken.length > 0 && (
+              <ul className="review-downloads">
+                {[...taken].reverse().map((download) => <DownloadLine key={download.id} download={download} />)}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+      {loose.length > 0 && (
+        <li className="review review-approved">
+          <div className="review-head"><strong>Downloads</strong></div>
+          <ul className="review-downloads">
+            {[...loose].reverse().map((download) => <DownloadLine key={download.id} download={download} />)}
+          </ul>
         </li>
-      ))}
+      )}
     </ol>
   );
 }
@@ -139,6 +200,7 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
   const [copied, setCopied] = useState(false);
   const [expiresInDays, setExpiresInDays] = useState<number | null>(null);
   const [askApproval, setAskApproval] = useState(false);
+  const [language, setLanguage] = useState<"es" | "en">("es");
 
   const share = state?.share ?? null;
   const url = share ? `${(state?.publicUrl ?? window.location.origin).replace(/\/+$/, "")}${share.path}` : "";
@@ -212,9 +274,15 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
                 ))}
               </select>
             </label>
+            <label className="field field-wide">
+              <span>Page language for the viewer</span>
+              <select value={language} onChange={(e) => { setLanguage(e.target.value === "en" ? "en" : "es"); }}>
+                {LANGUAGE_CHOICES.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+              </select>
+            </label>
             <label className="share-check">
               <input type="checkbox" checked={askApproval} onChange={(e) => { setAskApproval(e.target.checked); }} />
-              <span>Request approval: viewers can approve or ask for changes, with their name</span>
+              <span>Request approval: viewers can approve (and then download the PDF) or ask for changes, with their name</span>
             </label>
             <div className="dialog-actions">
               <button type="button" className="secondary" onClick={onClose}>
@@ -225,7 +293,7 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
                 className="primary"
                 disabled={busy || (pin !== "" && !pinValid)}
                 onClick={() => {
-                  void run(() => api.saveShare(designId, { ...(pin ? { pin } : {}), expiresInDays, approvalRequested: askApproval }));
+                  void run(() => api.saveShare(designId, { ...(pin ? { pin } : {}), expiresInDays, approvalRequested: askApproval, language }));
                 }}
               >
                 {busy ? "Creating…" : "Create link"}
@@ -311,6 +379,20 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
                 ))}
               </select>
             </div>
+            <div className="share-pin-row">
+              <span>Viewer page in</span>
+              <select
+                aria-label="Language of the viewer page"
+                value={share.language}
+                disabled={busy}
+                onChange={(e) => {
+                  const next = e.target.value === "en" ? "en" : "es";
+                  void run(() => api.saveShare(designId, { language: next }));
+                }}
+              >
+                {LANGUAGE_CHOICES.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+              </select>
+            </div>
             <label className="share-check">
               <input
                 type="checkbox"
@@ -323,7 +405,9 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
               />
               <span>Request approval</span>
             </label>
-            {(share.approvalRequested || share.reviews.length > 0) && <ReviewList share={share} revision={revision} />}
+            {(share.approvalRequested || share.reviews.length > 0 || (state?.downloads?.length ?? 0) > 0) && (
+              <ReviewList share={share} revision={revision} downloads={state?.downloads ?? []} />
+            )}
 
             <p className="muted share-viewed">
               {share.lastViewedAt ? `Last viewed ${ago(share.lastViewedAt)}` : "Not viewed yet"}

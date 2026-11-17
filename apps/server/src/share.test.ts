@@ -1,10 +1,12 @@
+import { createHash } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Design } from "@mycanvas/shared";
 // Type only: the app is imported after the environment is set up below.
 import type { app as appInstance } from "./app";
+import type { ShareNotice } from "./notify";
 
 const OWNER = "owner@example.com";
 const TOKEN = "test-agent-token-0123456789abcdef0123456789";
@@ -229,10 +231,10 @@ describe("share links", () => {
       json: { ops: [{ op: "addLayer", layer: { type: "rect", x: 0, y: 0, width: 10, height: 10, fill: "#000000" } }] },
     }));
     await app.request(`${AGENT}/designs/${design.id}/lock`, request({ method: "DELETE", as: "agent" }));
-    const stale = await review({ name: "Teresa", decision: "approved", revision });
+    const stale = await review({ name: "Teresa", decision: "approved", revision, acknowledged: true, ackVersion: "1" });
     expect(stale.status).toBe(409);
     revision = (await view()).approval.revision;
-    expect((await review({ name: "Teresa", decision: "approved", comment: "", revision })).status).toBe(201);
+    expect((await review({ name: "Teresa", decision: "approved", comment: "", revision, acknowledged: true, ackVersion: "1" })).status).toBe(201);
 
     // The editor sees the whole history; a new link keeps it.
     const info = (await (await app.request(`/api/designs/${design.id}/share`, request())).json()) as { share: { reviews: { decision: string; revision: number }[] } };
@@ -259,7 +261,7 @@ describe("share links", () => {
       expect(made.url).toBe(`https://canvas.example.com${made.share.path}`);
 
       const revision = ((await (await app.request(`${made.share.path}/design`, request({ as: "public" }))).json()) as { approval: { revision: number } }).approval.revision;
-      await app.request(`${made.share.path}/review`, request({ method: "POST", as: "public", json: { name: "Teresa", decision: "approved", comment: "OK", revision } }));
+      await app.request(`${made.share.path}/review`, request({ method: "POST", as: "public", json: { name: "Teresa", decision: "approved", comment: "OK", revision, acknowledged: true, ackVersion: "1" } }));
       const back = (await (await agent()).json()) as { share: { reviews: { name: string; decision: string }[] } };
       expect(back.share.reviews).toMatchObject([{ name: "Teresa", decision: "approved" }]);
 
@@ -277,5 +279,272 @@ describe("share links", () => {
     expect(css.status).toBe(200);
     expect(css.headers.get("content-type")).toMatch(/text\/css/);
     expect((await app.request(`${base}/fonts.json`, request({ as: "public" }))).status).toBe(200);
+  });
+});
+
+// ── Sign-off, download proof, language and notifications ─────────────────
+
+interface ViewApproval {
+  requested: boolean;
+  revision: number;
+  language: string;
+  latest: Record<string, unknown> | null;
+  acknowledgement: { version: string; text: string };
+  downloadable: boolean;
+}
+
+interface Download {
+  name: string;
+  token: string;
+  revision: number;
+  sha256: string;
+  bytes: number;
+  ip: string | null;
+  forwardedFor: string | null;
+  userAgent: string | null;
+  acknowledgement: { version: string; language: string; text: string };
+}
+
+describe("approval sign-off and approved PDF downloads", () => {
+  const notices: ShareNotice[] = [];
+  let exports = 0;
+
+  beforeAll(async () => {
+    const { setSharePdfExporter } = await import("./share-routes");
+    setSharePdfExporter((_ws, design) => {
+      exports += 1;
+      return Promise.resolve(Buffer.from(`%PDF-1.7 fake ${design.id} r${String(design.revision ?? 0)}`));
+    });
+    const { setNotifyTransports } = await import("./notify");
+    setNotifyTransports([{ name: "mock", send: (notice) => { notices.push(notice); return Promise.resolve(); } }]);
+  });
+
+  afterEach(() => {
+    notices.length = 0;
+  });
+
+  async function approvalLink() {
+    const { design } = await newDesign();
+    const base = (await share(design.id, { approvalRequested: true })).share?.path ?? "";
+    const view = async () => ((await (await app.request(`${base}/design`, request({ as: "public" }))).json()) as { approval: ViewApproval }).approval;
+    const post = (what: "review" | "download", json: unknown, headers: Record<string, string> = {}) =>
+      app.request(`${base}/${what}`, request({ method: "POST", as: "public", json, headers }));
+    const edit = async () => {
+      await app.request(`${AGENT}/designs/${design.id}/ops`, request({
+        method: "POST",
+        as: "agent",
+        json: { ops: [{ op: "addLayer", layer: { type: "rect", x: 0, y: 0, width: 10, height: 10, fill: "#000000" } }] },
+      }));
+      await app.request(`${AGENT}/designs/${design.id}/lock`, request({ method: "DELETE", as: "agent" }));
+    };
+    const state = async () => (await (await app.request(`${AGENT}/designs/${design.id}/share`, request({ as: "agent" }))).json()) as {
+      share: { language: string; reviews: { name: string; decision: string; acknowledgement?: { text: string }; ip?: string }[] };
+      downloads: Download[];
+    };
+    return { design, base, view, post, edit, state };
+  }
+
+  const ack = { acknowledged: true, ackVersion: "1" };
+
+  it("needs the sign-off box ticked to approve, and records the exact text shown", async () => {
+    const { view, post, state } = await approvalLink();
+    const approval = await view();
+    expect(approval.language).toBe("es");
+    expect(approval.acknowledgement.version).toBe("1");
+    expect(approval.acknowledgement.text).toBe(
+      `Al aprobar y descargar, confirmo mi conformidad con este diseño en su versión ${String(approval.revision)} y acepto que se considera entregado.`,
+    );
+    const revision = approval.revision;
+
+    const unticked = await post("review", { name: "Ana", decision: "approved", revision });
+    expect(unticked.status).toBe(400);
+    expect(await unticked.json()).toMatchObject({ code: "acknowledgement" });
+    expect((await post("review", { name: "Ana", decision: "approved", revision, acknowledged: true, ackVersion: "0" })).status).toBe(400);
+    // Asking for changes is not a sign-off: no box needed.
+    expect((await post("review", { name: "Ana", decision: "changes", comment: "Logo", revision })).status).toBe(201);
+
+    const ok = await post("review", { name: "Ana", decision: "approved", revision, ...ack }, { "user-agent": "TestPhone/1.0", "cf-connecting-ip": "203.0.113.7" });
+    expect(ok.status).toBe(201);
+    const reviews = (await state()).share.reviews;
+    expect(reviews.at(-1)).toMatchObject({ name: "Ana", decision: "approved", ip: "203.0.113.7", acknowledgement: { text: approval.acknowledgement.text } });
+    // Viewers see the answer, never where it came from.
+    const latest = (await view()).latest ?? {};
+    expect(latest).toMatchObject({ name: "Ana", decision: "approved" });
+    expect(latest).not.toHaveProperty("ip");
+    expect(latest).not.toHaveProperty("acknowledgement");
+  });
+
+  it("blocks the download before approval, without the box, and for stale or unapproved revisions", async () => {
+    const { view, post, edit } = await approvalLink();
+    let revision = (await view()).revision;
+    expect((await view()).downloadable).toBe(false);
+
+    const early = await post("download", { name: "Ana", revision, ...ack });
+    expect(early.status).toBe(403);
+    expect(await early.json()).toMatchObject({ code: "not-approved" });
+    await post("review", { name: "Ana", decision: "changes", comment: "Logo", revision });
+    expect((await post("download", { name: "Ana", revision, ...ack })).status).toBe(403);
+
+    expect((await post("review", { name: "Ana", decision: "approved", revision, ...ack })).status).toBe(201);
+    expect((await view()).downloadable).toBe(true);
+    expect((await post("download", { name: "Ana", revision })).status).toBe(400);
+    expect((await post("download", { name: "", revision, ...ack })).status).toBe(400);
+    expect((await post("download", { name: "Ana", revision, ...ack })).status).toBe(200);
+
+    // A later edit: the old revision is stale, the new one isn't approved yet.
+    await edit();
+    expect((await post("download", { name: "Ana", revision, ...ack })).status).toBe(409);
+    revision = (await view()).revision;
+    expect((await view()).downloadable).toBe(false);
+    expect((await post("download", { name: "Ana", revision, ...ack })).status).toBe(403);
+  });
+
+  it("logs every download as proof: name, sign-off text, revision, SHA-256, IP, user agent and token", async () => {
+    const { design, base, view, post, state } = await approvalLink();
+    const { revision, acknowledgement } = await view();
+    await post("review", { name: "Ana", decision: "approved", revision, ...ack });
+    const before = exports;
+    const headers = { "user-agent": "TestPhone/1.0", "x-forwarded-for": "198.51.100.4, 10.0.0.2", "x-real-ip": "10.0.0.2" };
+    const res = await post("download", { name: "Ana López", revision, ...ack }, headers);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/pdf");
+    expect(res.headers.get("content-disposition")).toMatch(/^attachment; filename=".+ v\d+\.pdf"; filename\*=UTF-8''/);
+    const bytes = Buffer.from(await res.arrayBuffer());
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    expect(res.headers.get("x-mycanvas-sha256")).toBe(sha);
+
+    // Re-downloads are allowed, logged each time, and serve the very same file.
+    const again = await post("download", { name: "Ana López", revision, ...ack }, headers);
+    expect(again.headers.get("x-mycanvas-sha256")).toBe(sha);
+    expect(exports - before).toBe(1);
+
+    const { downloads } = await state();
+    expect(downloads).toHaveLength(2);
+    expect(downloads[0]).toMatchObject({
+      kind: "download",
+      name: "Ana López",
+      token: base.slice(3),
+      revision,
+      sha256: sha,
+      bytes: bytes.length,
+      ip: "198.51.100.4",
+      forwardedFor: "198.51.100.4, 10.0.0.2",
+      realIp: "10.0.0.2",
+      userAgent: "TestPhone/1.0",
+      acknowledgement: { version: "1", language: "es", text: acknowledgement.text },
+    });
+    expect(downloads[0]).not.toHaveProperty("owner");
+    expect(Date.parse((downloads[0] as unknown as { at: string }).at)).toBeGreaterThan(0);
+
+    // The proof stays after the link is thrown away or stopped.
+    await share(design.id, { newLink: true });
+    await app.request(`/api/designs/${design.id}/share`, request({ method: "DELETE" }));
+    expect((await state()).downloads).toHaveLength(2);
+  });
+
+  it("keeps one approval when the same person approves the same revision again", async () => {
+    const { view, post, state } = await approvalLink();
+    const { revision } = await view();
+    expect((await post("review", { name: "Teresa", decision: "approved", revision, ...ack })).status).toBe(201);
+    const repeat = await post("review", { name: " teresa ", decision: "approved", revision, ...ack });
+    expect(repeat.status).toBe(200);
+    expect(await repeat.json()).toMatchObject({ repeat: true });
+    expect((await post("review", { name: "Teresa", decision: "approved", revision, ...ack })).status).toBe(200);
+    expect((await state()).share.reviews).toHaveLength(1);
+    // Someone else's approval still counts.
+    expect((await post("review", { name: "Luis", decision: "approved", revision, ...ack })).status).toBe(201);
+    expect((await state()).share.reviews).toHaveLength(2);
+  });
+
+  it("shows repeated approvals stored by older links as one, without rewriting them", async () => {
+    const { design } = await newDesign();
+    const { saveShare, shareInfo } = await import("./shares");
+    const record = await saveShare(OWNER, design.id, { approvalRequested: true });
+    const old = (id: string, at: string) => ({ id, name: "Teresa", decision: "approved" as const, comment: "", at, revision: 4 });
+    record.reviews = [old("a", "2026-11-16T10:00:00Z"), old("b", "2026-11-16T10:00:05Z"), old("c", "2026-11-16T10:00:09Z")];
+    expect(shareInfo(record).reviews.map((r) => r.id)).toEqual(["a"]);
+    expect(record.reviews).toHaveLength(3);
+    // A record without `language` (made before it existed) reads as Spanish.
+    expect(shareInfo({ ...record, language: undefined }).language).toBe("es");
+  });
+
+  it("has a per-link language, Spanish by default", async () => {
+    const { design, view, state } = await approvalLink();
+    expect((await state()).share.language).toBe("es");
+    expect((await app.request(`${AGENT}/designs/${design.id}/share`, request({ method: "PUT", as: "agent", json: { language: "fr" } }))).status).toBe(400);
+    expect((await (await app.request(`${AGENT}/designs/${design.id}/share`, request({ method: "PUT", as: "agent", json: { language: "en" } }))).json())).toMatchObject({ share: { language: "en" } });
+    const approval = await view();
+    expect(approval.language).toBe("en");
+    expect(approval.acknowledgement.text).toMatch(/^By approving and downloading/);
+    const pinned = (await share(design.id, { pin: "5555" })).share?.path ?? "";
+    expect(await (await app.request(`${pinned}/design`, request({ as: "public" }))).json()).toMatchObject({ pin: true, language: "en" });
+  });
+
+  it("notifies on approval, change request and download (not on a repeat)", async () => {
+    const { design, view, post } = await approvalLink();
+    const { revision } = await view();
+    await post("review", { name: "Ana", decision: "changes", comment: "Bigger logo", revision });
+    await post("review", { name: "Ana", decision: "approved", revision, ...ack });
+    await post("review", { name: "Ana", decision: "approved", revision, ...ack });
+    await post("download", { name: "Ana", revision, ...ack });
+    expect(notices.map((n) => n.kind)).toEqual(["changes", "approved", "downloaded"]);
+    expect(notices[0]).toMatchObject({ designId: design.id, designName: "Sponsor image", reviewer: "Ana", revision, comment: "Bigger logo" });
+    expect(notices[2]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe("notifier", () => {
+  const env = {
+    NOTIFY_TELEGRAM_BOT_TOKEN: "123456:SECRET-bot-token",
+    NOTIFY_TELEGRAM_CHAT_ID: "42",
+    NOTIFY_WEBHOOK_URL: "https://ntfy.example.com/",
+    NOTIFY_WEBHOOK_TOPIC: "mycanvas",
+    MYCANVAS_EDITOR_URL: "https://canva.local/",
+  };
+  const notice: ShareNotice = { kind: "downloaded", designId: "abc123", designName: "Playbook", reviewer: "Ana", revision: 7, sha256: "f".repeat(64) };
+
+  it("posts to Telegram and the webhook with the design, reviewer, revision and editor link", async () => {
+    const { transportsFromEnv, noticeMessage } = await import("./notify");
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const fake = (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(init.body as string) as Record<string, unknown> });
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    };
+    const transports = transportsFromEnv(env, fake);
+    expect(transports.map((t) => t.name)).toEqual(["telegram", "webhook"]);
+    const message = noticeMessage(notice, env);
+    expect(message.text).toContain("Ana downloaded the approved PDF of \"Playbook\"");
+    expect(message.text).toContain("Revision 7");
+    expect(message.editorUrl).toBe("https://canva.local/#/edit/abc123");
+    for (const transport of transports) {
+      await transport.send(notice, message, new AbortController().signal);
+    }
+    expect(calls[0]?.url).toBe("https://api.telegram.org/bot123456:SECRET-bot-token/sendMessage");
+    expect(calls[0]?.body).toMatchObject({ chat_id: "42", text: message.text });
+    expect(calls[1]?.body).toMatchObject({ topic: "mycanvas", event: "share.downloaded", reviewer: "Ana", revision: 7, editorUrl: message.editorUrl });
+    expect(transportsFromEnv({}, fake)).toEqual([]);
+  });
+
+  it("never throws and keeps secrets out of the log", async () => {
+    const { notify, redact, setNotifyTransports } = await import("./notify");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    setNotifyTransports([{ name: "broken", send: () => Promise.reject(new Error(`fetch https://api.telegram.org/bot${env.NOTIFY_TELEGRAM_BOT_TOKEN}/sendMessage failed`)) }]);
+    const saved = process.env.NOTIFY_TELEGRAM_BOT_TOKEN;
+    process.env.NOTIFY_TELEGRAM_BOT_TOKEN = env.NOTIFY_TELEGRAM_BOT_TOKEN;
+    try {
+      await expect(notify(notice)).resolves.toBeUndefined();
+      const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+      expect(logged).toContain("notify (broken) failed");
+      expect(logged).not.toContain("SECRET");
+      expect(redact("x SECRET y", { NOTIFY_WEBHOOK_TOKEN: "SECRET" })).toBe("x [redacted] y");
+    } finally {
+      if (saved === undefined) {
+        delete process.env.NOTIFY_TELEGRAM_BOT_TOKEN;
+      } else {
+        process.env.NOTIFY_TELEGRAM_BOT_TOKEN = saved;
+      }
+      setNotifyTransports(null);
+      warn.mockRestore();
+    }
   });
 });

@@ -197,6 +197,12 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   also serves the built web app.
 - `Dockerfile` + `docker-compose.coolify.yml` — single-container deployment
   (used on Coolify); `ops/traefik/` holds the LAN-only HTTPS route.
+  Share-link notifications (approve, changes, PDF download) go to Telegram
+  and/or a webhook when `NOTIFY_TELEGRAM_BOT_TOKEN` + `NOTIFY_TELEGRAM_CHAT_ID`
+  or `NOTIFY_WEBHOOK_URL` are set in Coolify; see docs/AGENT_API.md
+  ("Notifications"). Proof of sign-off and downloads is appended to
+  `data/share-proofs.jsonl` and approved PDFs are kept in `data/share-pdfs/`
+  (both on the data volume).
 - `apps/web` — React + react-konva editor (Vite).
 - `packages/shared` — types, aspect-ratio presets, curated Google Fonts list.
 
