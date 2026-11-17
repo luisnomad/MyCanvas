@@ -504,6 +504,65 @@ entry, else X-Real-IP (Traefik); the raw headers are kept beside it. The
 editor's Share dialog shows "Approved and downloaded by X · when · PDF sha …"
 under each approval. This is a record of what happened, not legal advice.
 
+### Share activity
+
+| method | path | what |
+|---|---|---|
+| GET | `/designs/:id/share/activity` | `{ summary, events }` for every link the design has had (kept after a link is stopped or replaced). The editor uses the same at `/api/designs/:id/share/activity`. |
+
+`summary` is `{ opens, visitors, ips, lastOpenAt, previews, ownerOpens,
+approvals, changes, downloads }`. `opens` counts sessions by visitors,
+`visitors` counts distinct devices (visitor ids), and `ips` counts distinct IPs
+as a second hint. The owner's own opens and link previews are left out of
+these counts.
+
+`events` is newest first. Each one is `{ id, kind, at, audience, token, revision,
+visitorId, visitor, ip, country, userAgent, browser, os, device, screen?,
+views?, pagesViewed?, lastSeenAt?, name?, comment?, sha256? }`:
+
+- `kind`: `opened`, `pin-failed`, `preview`, `changes`, `approved` or
+  `downloaded`.
+- `audience`: `visitor`, `owner` or `bot`. `owner` is the design's owner,
+  identified by the LAN route, a Cloudflare Access session cookie
+  (`CF_Authorization`) or the agent token. `bot` is a link preview such as
+  WhatsApp, Slack, Telegram, iMessage, Gmail's image proxy, a headless
+  browser or a script.
+- `device`: `mobile`, `tablet`, `desktop` or `bot`. It is read from the user
+  agent, plus the page's touch hint for iPads.
+- `visitor`: the key that counts distinct devices. It is the visitor id, or a
+  hash of IP and user agent when the page sent no id.
+- On `opened`: `views` is the number of loads in the session and
+  `pagesViewed` is the number of distinct pages seen.
+
+How it is recorded:
+
+- **Visitor id:** the share page keeps a random 32-hex id in localStorage
+  (`mycanvas.visitor`, first-party, this site only). It sends the id with each
+  open, page, wrong PIN, review and download.
+- **Opens:** once the design has loaded (after the PIN, if there is one), the
+  page sends `POST /s/<token>/activity { type: "open", visitorId, screen,
+  touch }`. A reload by the same visitor within 30 minutes is a `view` in the
+  same session, not a new open. Each new page shown sends `{ type: "page",
+  page }`.
+- **Wrong PINs:** a wrong PIN on `/s/<token>/unlock` is a `pin-failed` event.
+- **Link previews:** a bot fetching `/s/<token>` itself is a `preview` event,
+  logged once per bot and IP per 30 minutes.
+- **IP and country:** IP comes from the same resolver as downloads
+  (CF-Connecting-IP, then X-Forwarded-For, then X-Real-IP), and country from
+  Cloudflare's `CF-IPCountry`.
+- **Storage:** an append-only log at `data/share-activity.jsonl`. Change
+  requests are logged there too. Approvals and downloads stay in
+  `data/share-proofs.jsonl`, which now also records `visitorId` and `country`.
+  The timeline merges both logs, plus older reviews from the current link
+  that predate the logs. Raw IPs stay in these logs, in this endpoint and in
+  the owner's own notifications.
+
+The public page says so in small print, in Spanish and English: "Este enlace
+registra aperturas, aprobaciones y descargas (fecha, IP y dispositivo) para el
+propietario del diseño." This is a transparency notice, not legal advice. Whether
+it is enough under the GDPR for a given use is for the owner to decide, with
+advice if needed.
+
 ### Notifications
 
 When a viewer approves, asks for changes or downloads the approved PDF, the
@@ -513,8 +572,8 @@ and Claude can read or set them here. Without settings, nothing is sent.
 
 | method | path | what |
 |---|---|---|
-| GET | `/settings/notifications` | `{ telegram: { botToken, chatId }, webhook: { url, topic, token }, configured }`. Secrets come back masked (`"••••1234"`) or `null`, never in full. |
-| PUT | `/settings/notifications` | `{ telegram?: { botToken?, chatId? }, webhook?: { url?, topic?, token? } }`: an omitted field is kept, `""` or `null` clears it, a string replaces it. Returns the masked settings. 400 for a malformed bot token, chat ID or URL. |
+| GET | `/settings/notifications` | `{ telegram: { botToken, chatId }, webhook: { url, topic, token }, notifyOnOpen, configured }`. Secrets come back masked (`"••••1234"`) or `null`, never in full. |
+| PUT | `/settings/notifications` | `{ telegram?: { botToken?, chatId? }, webhook?: { url?, topic?, token? }, notifyOnOpen? }`: an omitted field is kept, `""` or `null` clears it, a string replaces it. Returns the masked settings. 400 for a malformed bot token, chat ID or URL. |
 | POST | `/settings/notifications/test` | sends a test message on every saved channel: `{ ok, results: [{ channel: "telegram" \| "webhook", ok, error? }] }`; 400 when nothing is set up. |
 
 The editor uses the same routes under `/api/settings/notifications`.
@@ -532,6 +591,15 @@ The editor uses the same routes under `/api/settings/notifications`.
   `https://ntfy.sh/`), and `Authorization: Bearer <token>` when set.
 - `MYCANVAS_EDITOR_URL` (env, optional) is the editor base for the link in the
   message (default `https://canva.local`).
+
+**Link opened** (`notifyOnOpen`, default `true`): sent for the first open by
+a new visitor, and for a known visitor's new session after 30 or more minutes
+away. It is never sent for the owner's own opens or for link previews. At most
+one message goes out per link every 10 minutes; opens in between are held and
+sent together when the window ends. The message has the design name, and for
+each open: new or returning visitor, device, browser and OS, country and IP.
+The webhook body adds `opens: [{ at, newVisitor, device, browser, os, ip,
+country }]` and uses the event `share.opened`.
 
 The message names the design, the viewer, what they did, the revision, the
 comment or PDF SHA-256, and the editor link. Sending is fire and forget with a

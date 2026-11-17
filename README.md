@@ -201,7 +201,10 @@ To run the apps separately: `npm run dev:server` / `npm run dev:web`.
   person in the editor (user menu → Notifications: Telegram bot token and
   chat ID, optional webhook), stored encrypted in
   `data/users/<email>/notifications.json`; see docs/AGENT_API.md
-  ("Notifications"). `MYCANVAS_EDITOR_URL` sets the editor link in them. Proof of sign-off and downloads is appended to
+  ("Notifications"). `MYCANVAS_EDITOR_URL` sets the editor link in them.
+  Share-link activity (opens per device, wrong PINs, link previews, reviews,
+  downloads) is appended to `data/share-activity.jsonl` and shown in the
+  Share dialog; see docs/AGENT_API.md ("Share activity"). Proof of sign-off and downloads is appended to
   `data/share-proofs.jsonl` and approved PDFs are kept in `data/share-pdfs/`
   (both on the data volume).
 - `apps/web` — React + react-konva editor (Vite).

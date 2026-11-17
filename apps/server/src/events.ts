@@ -20,7 +20,9 @@ export type WorkspaceEvent =
   | { type: "assets.changed" }
   | { type: "fonts.changed" }
   /** The design's share link was created, changed or removed (viewers re-check). */
-  | { type: "share.changed"; id: string };
+  | { type: "share.changed"; id: string }
+  /** New share-link activity (an open, a wrong PIN…): for the owner's editor only, not viewers. */
+  | { type: "share.activity"; id: string };
 
 type Listener = (event: WorkspaceEvent) => void;
 

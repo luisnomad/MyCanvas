@@ -19,6 +19,10 @@ import { type ShareLanguage, SHARE_LANGUAGES, errorText, formatWhen, isShareLang
  * sends, and then download the approved PDF. Every download is logged on
  * the server as proof of delivery.
  *
+ * The page reports that it was opened (and which pages were seen) with a
+ * random first-party visitor id kept on this device, so the owner can tell
+ * how many devices opened the link; a small notice says so.
+ *
  * The page speaks the link's language (Spanish unless Luis picks English);
  * the viewer can switch. On phones the design fills the screen and the
  * controls live in a sheet behind one button.
@@ -57,6 +61,30 @@ function store(key: string, value: string): void {
   } catch {
     // Private window: it just isn't remembered.
   }
+}
+
+const VISITOR_KEY = "mycanvas.visitor";
+let memoryVisitor: string | null = null;
+
+/** A random id for this device (first-party, this site only): counts distinct devices for the owner. */
+function visitorId(): string {
+  const saved = stored(VISITOR_KEY);
+  if (/^[a-f0-9]{32}$/.test(saved)) {
+    return saved;
+  }
+  memoryVisitor ??= Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  store(VISITOR_KEY, memoryVisitor);
+  return memoryVisitor;
+}
+
+/** Tells the server the page opened or showed a page; best effort, never in the way. */
+function report(base: string, body: Record<string, unknown>): void {
+  void fetch(`${base}/activity`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...body, visitorId: visitorId() }),
+    keepalive: true,
+  }).catch(() => undefined);
 }
 
 function useMediaQuery(query: string): boolean {
@@ -153,7 +181,7 @@ function ApprovalPanel({ base, approval, language, onDone, inSheet }: {
     setNotice(null);
   };
 
-  const signOff = () => ({ name: name.trim(), revision: approval.revision, acknowledged: agreed, ackVersion: ack?.version, language });
+  const signOff = () => ({ name: name.trim(), revision: approval.revision, acknowledged: agreed, ackVersion: ack?.version, language, visitorId: visitorId() });
 
   const download = async () => {
     setBusy("downloading");
@@ -427,6 +455,21 @@ export function SharedView({ token }: { token: string }) {
 
   const pages = design?.pages ?? [];
   const pageIndex = Math.max(0, pages.findIndex((page) => page.id === activePageId));
+
+  // Once per page load, when the design first shows: "opened". Later, each page shown.
+  const reportedRef = useRef(false);
+  useEffect(() => {
+    if (status !== "ready" || reportedRef.current) {
+      return;
+    }
+    reportedRef.current = true;
+    report(base, { type: "open", screen: `${String(window.screen.width)}x${String(window.screen.height)}`, touch: navigator.maxTouchPoints > 1 });
+  }, [status, base]);
+  useEffect(() => {
+    if (status === "ready" && reportedRef.current && pageIndex > 0) {
+      report(base, { type: "page", page: pageIndex });
+    }
+  }, [status, base, pageIndex]);
   const goToPage = useCallback((index: number) => {
     const page = useEditorStore.getState().design?.pages[index];
     if (page) {
@@ -460,7 +503,7 @@ export function SharedView({ token }: { token: string }) {
       const res = await fetch(`${base}/unlock`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ pin: pin.trim() }),
+        body: JSON.stringify({ pin: pin.trim(), visitorId: visitorId() }),
       });
       if (res.ok) {
         setPin("");
@@ -515,6 +558,7 @@ export function SharedView({ token }: { token: string }) {
           <button type="submit" className="primary" disabled={checking || pin.length < 4}>
             {checking ? t.pinChecking : t.pinSubmit}
           </button>
+          <p className="shared-privacy">{t.privacyNotice}</p>
         </form>
       </div>
     );
@@ -614,6 +658,7 @@ export function SharedView({ token }: { token: string }) {
                 <span>{t.language}</span>
                 <LanguageSwitch language={language} onChange={chooseLanguage} t={t} />
               </div>
+              <p className="shared-privacy">{t.privacyNotice}</p>
             </div>
           </div>
         )}
@@ -627,7 +672,7 @@ export function SharedView({ token }: { token: string }) {
       <div className="shared-stage">
         {canvas}
         <div className="shared-toolbar">
-          <span />
+          <p className="shared-privacy">{t.privacyNotice}</p>
           {pages.length > 1 ? <PageSwitcher index={pageIndex} total={pages.length} onGo={goToPage} t={t} /> : <span />}
           <LanguageSwitch language={language} onChange={chooseLanguage} t={t} />
         </div>

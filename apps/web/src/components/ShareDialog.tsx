@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { type ShareDownload, type ShareInfo, type ShareReview, type ShareState, api } from "../api";
 import { useEditorStore } from "../store/editorStore";
 import { onLive } from "../utils/live";
+import { ShareActivityLog } from "./ShareActivity";
 
 /*
  * Share a read-only, live view of the design (e.g. with a customer): anyone
@@ -32,14 +33,20 @@ const EXPIRY_CHOICES: { label: string; days: number | null }[] = [
   { label: "In 30 days", days: 30 },
 ];
 
+/** Dates and relative times follow the editor's UI language (English), not the browser's. */
+const EDITOR_LOCALE = "en-GB";
+
 function when(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleString(EDITOR_LOCALE, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 /** "5 minutes ago", "yesterday"… */
 function ago(iso: string, now = Date.now()): string {
   const minutes = Math.round((now - Date.parse(iso)) / 60_000);
-  const format = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (minutes < 1) {
+    return "just now";
+  }
+  const format = new Intl.RelativeTimeFormat(EDITOR_LOCALE, { numeric: "auto" });
   if (minutes < 60) {
     return format.format(-Math.max(0, minutes), "minute");
   }
@@ -408,6 +415,8 @@ export function ShareDialog({ designId, onClose }: { designId: string; onClose: 
             {(share.approvalRequested || share.reviews.length > 0 || (state?.downloads?.length ?? 0) > 0) && (
               <ReviewList share={share} revision={revision} downloads={state?.downloads ?? []} />
             )}
+
+            <ShareActivityLog designId={designId} />
 
             <p className="muted share-viewed">
               {share.lastViewedAt ? `Last viewed ${ago(share.lastViewedAt)}` : "Not viewed yet"}

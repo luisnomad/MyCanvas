@@ -19,7 +19,18 @@ import { type Workspace, readJsonFile, writeJsonFile } from "./storage";
  * without secrets, and nothing here can fail the customer's request.
  */
 
-export type NoticeKind = "approved" | "changes" | "downloaded" | "test";
+export type NoticeKind = "approved" | "changes" | "downloaded" | "opened" | "test";
+
+/** One open of a share link, for the "link opened" message. */
+export interface OpenInfo {
+  at: string;
+  newVisitor: boolean;
+  device: string;
+  browser: string;
+  os: string;
+  ip: string | null;
+  country: string | null;
+}
 
 export interface ShareNotice {
   kind: NoticeKind;
@@ -29,24 +40,31 @@ export interface ShareNotice {
   revision: number;
   comment?: string;
   sha256?: string;
+  /** opened: the opens this message reports (more than one when held back by the 10-minute limit). */
+  opens?: OpenInfo[];
 }
 
 /** Decrypted settings, server-side only. */
 export interface NotifyConfig {
   telegram?: { botToken: string; chatId: string };
   webhook?: { url: string; topic?: string; token?: string };
+  /** Send "link opened" messages (default true). */
+  notifyOnOpen?: boolean;
 }
 
 /** What is stored on disk. */
 interface StoredSettings {
   telegram?: { botToken?: string; chatId?: string };
   webhook?: { url?: string; topic?: string; token?: string };
+  notifyOnOpen?: boolean;
 }
 
 /** What the browser and the agent see: secrets masked, never in full. */
 export interface MaskedSettings {
   telegram: { botToken: string | null; chatId: string };
   webhook: { url: string | null; topic: string; token: string | null };
+  /** Send a message when a share link is opened (default on). */
+  notifyOnOpen: boolean;
   /** At least one channel is complete. */
   configured: boolean;
 }
@@ -55,6 +73,7 @@ export interface MaskedSettings {
 export interface SettingsChange {
   telegram?: { botToken?: string | null; chatId?: string | null };
   webhook?: { url?: string | null; topic?: string | null; token?: string | null };
+  notifyOnOpen?: boolean;
 }
 
 const TIMEOUT_MS = 5000;
@@ -93,7 +112,7 @@ async function open(ws: Workspace, sealed: string | undefined, field: string): P
 /** The owner's channels, decrypted (server-side only). */
 export async function notifyConfig(ws: Workspace): Promise<NotifyConfig> {
   const stored = await readStored(ws);
-  const config: NotifyConfig = {};
+  const config: NotifyConfig = { notifyOnOpen: stored.notifyOnOpen !== false };
   const botToken = await open(ws, stored.telegram?.botToken, "telegram.botToken");
   const chatId = stored.telegram?.chatId ?? "";
   if (botToken && chatId) {
@@ -121,6 +140,7 @@ export async function maskedSettings(ws: Workspace): Promise<MaskedSettings> {
   return {
     telegram: { botToken: botToken ? mask(botToken) : null, chatId },
     webhook: { url: url ? mask(url) : null, topic: stored.webhook?.topic ?? "", token: token ? mask(token) : null },
+    notifyOnOpen: stored.notifyOnOpen !== false,
     configured: Boolean(botToken && chatId) || Boolean(url),
   };
 }
@@ -171,9 +191,14 @@ export function parseSettingsChange(body: Record<string, unknown>): SettingsChan
       throw new SettingsError("The webhook URL must start with https://");
     }
   }
+  const notifyOnOpen = body.notifyOnOpen;
+  if (notifyOnOpen !== undefined && typeof notifyOnOpen !== "boolean") {
+    throw new SettingsError("notifyOnOpen must be true or false");
+  }
   return {
     telegram: { botToken, chatId },
     webhook: { url, topic: cleanText(webhook.topic, "webhook.topic", 200), token: cleanText(webhook.token, "webhook.token", 500) },
+    ...(notifyOnOpen === undefined ? {} : { notifyOnOpen }),
   };
 }
 
@@ -204,6 +229,7 @@ export async function saveSettings(ws: Workspace, change: SettingsChange): Promi
       topic: plain(stored.webhook?.topic, change.webhook?.topic),
       token: await seal(ws, stored.webhook?.token, change.webhook?.token, "webhook.token"),
     },
+    notifyOnOpen: change.notifyOnOpen ?? stored.notifyOnOpen,
   };
   await writeJsonFile(ws.notificationsFile, JSON.parse(JSON.stringify(next)) as StoredSettings);
   return maskedSettings(ws);
@@ -223,6 +249,9 @@ export function noticeMessage(notice: ShareNotice, source: NodeJS.ProcessEnv = p
     const title = "MyCanvas: test notification";
     return { title, text: `${title}\nShare-link notifications reach you here.`, editorUrl: editorUrl("", source).replace(/\/#\/edit\/$/, "") };
   }
+  if (notice.kind === "opened") {
+    return openedMessage(notice, source);
+  }
   const what = notice.kind === "approved"
     ? "approved"
     : notice.kind === "changes" ? "requested changes on" : "downloaded the approved PDF of";
@@ -234,6 +263,32 @@ export function noticeMessage(notice: ShareNotice, source: NodeJS.ProcessEnv = p
   }
   if (notice.sha256) {
     lines.push(`PDF SHA-256: ${notice.sha256}`);
+  }
+  lines.push(url);
+  return { title, text: lines.join("\n"), editorUrl: url };
+}
+
+const DEVICE_LABEL: Record<string, string> = { mobile: "phone", tablet: "tablet", desktop: "computer" };
+
+function openLine(open: OpenInfo): string {
+  const where = [open.country, open.ip].filter(Boolean).join(" ");
+  return [
+    open.newVisitor ? "New visitor" : "Returning visitor",
+    DEVICE_LABEL[open.device] ?? open.device,
+    open.os ? `${open.browser} on ${open.os}` : open.browser,
+    where,
+  ].filter(Boolean).join(" · ");
+}
+
+function openedMessage(notice: ShareNotice, source: NodeJS.ProcessEnv): { title: string; text: string; editorUrl: string } {
+  const opens = notice.opens ?? [];
+  const title = opens.length > 1
+    ? `MyCanvas: "${notice.designName}" was opened ${String(opens.length)} times`
+    : `MyCanvas: "${notice.designName}" was opened`;
+  const url = editorUrl(notice.designId, source);
+  const lines = [title, ...opens.slice(0, 10).map(openLine)];
+  if (opens.length > 10) {
+    lines.push(`…and ${String(opens.length - 10)} more`);
   }
   lines.push(url);
   return { title, text: lines.join("\n"), editorUrl: url };
@@ -286,6 +341,7 @@ export function transportsFor(config: NotifyConfig, send: FetchLike = fetchImpl)
             revision: notice.revision,
             comment: notice.comment ?? null,
             sha256: notice.sha256 ?? null,
+            ...(notice.opens ? { opens: notice.opens } : {}),
             editorUrl: message.editorUrl,
             at: new Date().toISOString(),
           }),
@@ -332,6 +388,9 @@ export async function sendAll(config: NotifyConfig, notice: ShareNotice): Promis
 export async function notify(owner: Workspace, notice: ShareNotice): Promise<void> {
   try {
     const config = await notifyConfig(owner);
+    if (notice.kind === "opened" && config.notifyOnOpen === false) {
+      return;
+    }
     for (const result of await sendAll(config, notice)) {
       if (!result.ok) {
         console.warn(`notify (${result.channel}) failed: ${result.error ?? ""}`);
