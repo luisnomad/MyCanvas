@@ -37,6 +37,8 @@ export interface Workspace {
   aiFile: string;
   /** AI keys, encrypted (see secrets.ts). */
   aiSecretsFile: string;
+  /** Where share-link notifications go; tokens encrypted (see notify.ts). */
+  notificationsFile: string;
 }
 
 /** Folder-safe, readable key for an email ("Luis.SG@gmail.com" → "luis-sg-gmail-com"). */
@@ -60,6 +62,7 @@ function workspacePaths(email: string): Workspace {
     assetFoldersFile: path.join(root, "asset-folders.json"),
     aiFile: path.join(root, "ai.json"),
     aiSecretsFile: path.join(root, "ai-secrets.json"),
+    notificationsFile: path.join(root, "notifications.json"),
   };
 }
 

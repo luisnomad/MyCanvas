@@ -6,11 +6,11 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Design } from "@mycanvas/shared";
 // Type only: the app is imported after the environment is set up below.
 import type { app as appInstance } from "./app";
-import type { ShareNotice } from "./notify";
 
 const OWNER = "owner@example.com";
 const TOKEN = "test-agent-token-0123456789abcdef0123456789";
 const AGENT = "/api/agent/v1";
+const OWNER_BOT = "111111:owner-a-bot-token-abcdefghijkl";
 let app: typeof appInstance;
 
 function request(init: RequestInit & { json?: unknown; as?: "agent" | "editor" | "public"; cookie?: string } = {}): RequestInit {
@@ -306,7 +306,7 @@ interface Download {
 }
 
 describe("approval sign-off and approved PDF downloads", () => {
-  const notices: ShareNotice[] = [];
+  const sent: { url: string; text: string }[] = [];
   let exports = 0;
 
   beforeAll(async () => {
@@ -315,12 +315,18 @@ describe("approval sign-off and approved PDF downloads", () => {
       exports += 1;
       return Promise.resolve(Buffer.from(`%PDF-1.7 fake ${design.id} r${String(design.revision ?? 0)}`));
     });
-    const { setNotifyTransports } = await import("./notify");
-    setNotifyTransports([{ name: "mock", send: (notice) => { notices.push(notice); return Promise.resolve(); } }]);
+    const { setNotifyFetch } = await import("./notify");
+    setNotifyFetch((url, init) => {
+      sent.push({ url, text: (JSON.parse(init.body as string) as { text: string }).text });
+      return Promise.resolve(new Response("{}"));
+    });
+    // The owner's own Telegram settings (the editor's user menu).
+    const res = await app.request("/api/settings/notifications", request({ method: "PUT", json: { telegram: { botToken: OWNER_BOT, chatId: "1001" } } }));
+    expect(res.status).toBe(200);
   });
 
   afterEach(() => {
-    notices.length = 0;
+    sent.length = 0;
   });
 
   async function approvalLink() {
@@ -487,64 +493,146 @@ describe("approval sign-off and approved PDF downloads", () => {
     await post("review", { name: "Ana", decision: "approved", revision, ...ack });
     await post("review", { name: "Ana", decision: "approved", revision, ...ack });
     await post("download", { name: "Ana", revision, ...ack });
-    expect(notices.map((n) => n.kind)).toEqual(["changes", "approved", "downloaded"]);
-    expect(notices[0]).toMatchObject({ designId: design.id, designName: "Sponsor image", reviewer: "Ana", revision, comment: "Bigger logo" });
-    expect(notices[2]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    await vi.waitFor(() => { expect(sent).toHaveLength(3); });
+    expect(sent.every((m) => m.url === `https://api.telegram.org/bot${OWNER_BOT}/sendMessage`)).toBe(true);
+    expect(sent[0]?.text).toContain("Ana requested changes on \"Sponsor image\"");
+    expect(sent[0]?.text).toContain(`Revision ${String(revision)}`);
+    expect(sent[0]?.text).toContain("Comment: Bigger logo");
+    expect(sent[0]?.text).toContain(`/#/edit/${design.id}`);
+    expect(sent[1]?.text).toContain("Ana approved \"Sponsor image\"");
+    expect(sent[2]?.text).toContain("Ana downloaded the approved PDF of \"Sponsor image\"");
+    expect(sent[2]?.text).toMatch(/PDF SHA-256: [a-f0-9]{64}/);
   });
 });
 
-describe("notifier", () => {
-  const env = {
-    NOTIFY_TELEGRAM_BOT_TOKEN: "123456:SECRET-bot-token",
-    NOTIFY_TELEGRAM_CHAT_ID: "42",
-    NOTIFY_WEBHOOK_URL: "https://ntfy.example.com/",
-    NOTIFY_WEBHOOK_TOPIC: "mycanvas",
-    MYCANVAS_EDITOR_URL: "https://canva.local/",
-  };
-  const notice: ShareNotice = { kind: "downloaded", designId: "abc123", designName: "Playbook", reviewer: "Ana", revision: 7, sha256: "f".repeat(64) };
+describe("per-user notification settings", () => {
+  const sent: { url: string; body: Record<string, unknown> }[] = [];
+  let failWith: string | null = null;
 
-  it("posts to Telegram and the webhook with the design, reviewer, revision and editor link", async () => {
-    const { transportsFromEnv, noticeMessage } = await import("./notify");
-    const calls: { url: string; body: Record<string, unknown> }[] = [];
-    const fake = (url: string, init: RequestInit) => {
-      calls.push({ url, body: JSON.parse(init.body as string) as Record<string, unknown> });
-      return Promise.resolve(new Response("{}", { status: 200 }));
-    };
-    const transports = transportsFromEnv(env, fake);
-    expect(transports.map((t) => t.name)).toEqual(["telegram", "webhook"]);
-    const message = noticeMessage(notice, env);
-    expect(message.text).toContain("Ana downloaded the approved PDF of \"Playbook\"");
-    expect(message.text).toContain("Revision 7");
-    expect(message.editorUrl).toBe("https://canva.local/#/edit/abc123");
-    for (const transport of transports) {
-      await transport.send(notice, message, new AbortController().signal);
-    }
-    expect(calls[0]?.url).toBe("https://api.telegram.org/bot123456:SECRET-bot-token/sendMessage");
-    expect(calls[0]?.body).toMatchObject({ chat_id: "42", text: message.text });
-    expect(calls[1]?.body).toMatchObject({ topic: "mycanvas", event: "share.downloaded", reviewer: "Ana", revision: 7, editorUrl: message.editorUrl });
-    expect(transportsFromEnv({}, fake)).toEqual([]);
+  beforeAll(async () => {
+    const { setNotifyFetch } = await import("./notify");
+    setNotifyFetch((url, init) => {
+      sent.push({ url, body: JSON.parse(init.body as string) as Record<string, unknown> });
+      return Promise.resolve(failWith === null ? new Response("{}") : new Response(failWith, { status: 401 }));
+    });
   });
 
-  it("never throws and keeps secrets out of the log", async () => {
-    const { notify, redact, setNotifyTransports } = await import("./notify");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    setNotifyTransports([{ name: "broken", send: () => Promise.reject(new Error(`fetch https://api.telegram.org/bot${env.NOTIFY_TELEGRAM_BOT_TOKEN}/sendMessage failed`)) }]);
-    const saved = process.env.NOTIFY_TELEGRAM_BOT_TOKEN;
-    process.env.NOTIFY_TELEGRAM_BOT_TOKEN = env.NOTIFY_TELEGRAM_BOT_TOKEN;
-    try {
-      await expect(notify(notice)).resolves.toBeUndefined();
-      const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
-      expect(logged).toContain("notify (broken) failed");
-      expect(logged).not.toContain("SECRET");
-      expect(redact("x SECRET y", { NOTIFY_WEBHOOK_TOKEN: "SECRET" })).toBe("x [redacted] y");
-    } finally {
-      if (saved === undefined) {
-        delete process.env.NOTIFY_TELEGRAM_BOT_TOKEN;
-      } else {
-        process.env.NOTIFY_TELEGRAM_BOT_TOKEN = saved;
-      }
-      setNotifyTransports(null);
-      warn.mockRestore();
+  afterEach(() => {
+    sent.length = 0;
+    failWith = null;
+  });
+
+  const settings = (init: RequestInit & { json?: unknown; as?: "agent" | "editor" } = {}, suffix = "") =>
+    app.request(`${init.as === "agent" ? AGENT : "/api"}/settings/notifications${suffix}`, request(init));
+
+  it("masks secrets in GET and PUT, keeps them encrypted on disk, and clears them", async () => {
+    const token = "222222:mask-test-bot-token-zyxwvutsrq";
+    const put = await settings({ method: "PUT", json: { telegram: { botToken: token, chatId: "424242" }, webhook: { url: "https://ntfy.example.com/secret-topic", topic: "mycanvas", token: "hook-secret-9876" } } });
+    expect(put.status).toBe(200);
+    const masked = (await put.json()) as unknown;
+    expect(masked).toEqual({
+      telegram: { botToken: "••••tsrq", chatId: "424242" },
+      webhook: { url: "••••opic", topic: "mycanvas", token: "••••9876" },
+      configured: true,
+    });
+    for (const res of [await settings(), await settings({ as: "agent" })]) {
+      const text = await res.text();
+      expect(text).not.toContain("mask-test-bot-token");
+      expect(text).not.toContain("secret-topic");
+      expect(text).not.toContain("hook-secret");
+      expect(JSON.parse(text)).toEqual(masked);
     }
+    const { readFile } = await import("node:fs/promises");
+    const { workspaceFor } = await import("./storage");
+    const onDisk = await readFile((await workspaceFor(OWNER)).notificationsFile, "utf8");
+    expect(onDisk).not.toContain("mask-test-bot-token");
+    expect(onDisk).toContain("424242");
+
+    // Omitted fields stay; "" or null clears.
+    expect(await (await settings({ method: "PUT", json: { telegram: { chatId: "777" } } })).json()).toMatchObject({ telegram: { botToken: "••••tsrq", chatId: "777" } });
+    expect(await (await settings({ method: "PUT", as: "agent", json: { webhook: { url: null, token: "" } } })).json()).toMatchObject({ webhook: { url: null, token: null } });
+    expect((await settings({ method: "PUT", json: { telegram: { botToken: "not a token" } } })).status).toBe(400);
+    expect((await settings({ method: "PUT", json: { telegram: { chatId: "me" } } })).status).toBe(400);
+    expect((await settings({ method: "PUT", json: { webhook: { url: "ftp://x" } } })).status).toBe(400);
+    // The agent API needs its token.
+    expect((await app.request(`${AGENT}/settings/notifications`, request({ as: "public" }))).status).toBe(401);
+  });
+
+  it("sends a test notification and reports each channel, without leaking the token", async () => {
+    const token = "333333:test-endpoint-bot-token-abcdef";
+    await settings({ method: "PUT", json: { telegram: { botToken: token, chatId: "55" }, webhook: { url: null } } });
+    const ok = await settings({ method: "POST" }, "/test");
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true, results: [{ channel: "telegram", ok: true }] });
+    expect(sent[0]?.url).toBe(`https://api.telegram.org/bot${token}/sendMessage`);
+    expect(sent[0]?.body).toMatchObject({ chat_id: "55" });
+    expect(String(sent[0]?.body.text)).toContain("test notification");
+
+    failWith = `{"ok":false,"description":"Unauthorized bot${token}"}`;
+    const bad = (await (await settings({ method: "POST", as: "agent" }, "/test")).json()) as { ok: boolean; results: { ok: boolean; error: string }[] };
+    expect(bad.ok).toBe(false);
+    expect(bad.results[0]?.error).toContain("HTTP 401");
+    expect(bad.results[0]?.error).not.toContain("test-endpoint-bot-token");
+
+    await settings({ method: "PUT", json: { telegram: { botToken: null, chatId: null } } });
+    const none = await settings({ method: "POST" }, "/test");
+    expect(none.status).toBe(400);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("notifies only the owner of the shared design, and nobody when the owner has no settings", async () => {
+    const { workspaceFor } = await import("./storage");
+    const { createDesign } = await import("./designs");
+    const { saveShare } = await import("./shares");
+    const { saveSettings } = await import("./notify");
+    const BOT_A = "444444:owner-a-routing-token-abcdef";
+    const BOT_B = "555555:owner-b-routing-token-abcdef";
+    await settings({ method: "PUT", json: { telegram: { botToken: BOT_A, chatId: "1" } } });
+
+    // Owner B: another workspace, with its own design, link and Telegram.
+    const wsB = await workspaceFor("b-owner@example.com");
+    await saveSettings(wsB, { telegram: { botToken: BOT_B, chatId: "2" } });
+    const linkFor = async (email: string) => {
+      const ws = await workspaceFor(email);
+      const made = await createDesign(ws, { name: `Design of ${email}`, width: 100, height: 100 });
+      if (!made.ok) {
+        throw new Error("design not created");
+      }
+      const record = await saveShare(email, made.design.id, { approvalRequested: true });
+      return `/s/${record.token}`;
+    };
+    const approve = async (base: string) => {
+      const revision = ((await (await app.request(`${base}/design`, request({ as: "public" }))).json()) as { approval: { revision: number } }).approval.revision;
+      const res = await app.request(`${base}/review`, request({ method: "POST", as: "public", json: { name: "Cliente", decision: "changes", comment: "Otro color", revision } }));
+      expect(res.status).toBe(201);
+    };
+
+    await approve(await linkFor("b-owner@example.com"));
+    await vi.waitFor(() => { expect(sent).toHaveLength(1); });
+    expect(sent.map((m) => m.url)).toEqual([`https://api.telegram.org/bot${BOT_B}/sendMessage`]);
+    expect(String(sent[0]?.body.text)).toContain("Design of b-owner@example.com");
+
+    sent.length = 0;
+    await approve(await linkFor(OWNER));
+    await vi.waitFor(() => { expect(sent).toHaveLength(1); });
+    expect(sent.map((m) => m.url)).toEqual([`https://api.telegram.org/bot${BOT_A}/sendMessage`]);
+
+    sent.length = 0;
+    await approve(await linkFor("c-owner@example.com"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(sent).toEqual([]);
+  });
+
+  it("builds the webhook JSON (ntfy topic, bearer) and redacts secrets", async () => {
+    const { transportsFor, noticeMessage, redact } = await import("./notify");
+    const calls: { url: string; init: RequestInit }[] = [];
+    const config = { webhook: { url: "https://ntfy.example.com/", topic: "mycanvas", token: "tok-123" } };
+    const [hook] = transportsFor(config, (url, init) => { calls.push({ url, init }); return Promise.resolve(new Response("{}")); });
+    const notice = { kind: "downloaded" as const, designId: "abc123", designName: "Playbook", reviewer: "Ana", revision: 7, sha256: "f".repeat(64) };
+    await hook?.send(notice, noticeMessage(notice, { MYCANVAS_EDITOR_URL: "https://canva.local/" }), new AbortController().signal);
+    expect(calls[0]?.url).toBe("https://ntfy.example.com/");
+    expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe("Bearer tok-123");
+    expect(JSON.parse(calls[0]?.init.body as string)).toMatchObject({ topic: "mycanvas", event: "share.downloaded", reviewer: "Ana", revision: 7, editorUrl: "https://canva.local/#/edit/abc123" });
+    expect(redact("x tok-123 y", config)).toBe("x [redacted] y");
   });
 });

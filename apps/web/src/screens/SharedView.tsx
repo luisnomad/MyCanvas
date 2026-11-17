@@ -5,6 +5,7 @@ import { setHeadlessMode, useEditorStore } from "../store/editorStore";
 import { useViewSettings } from "../store/viewSettings";
 import { loadCustomFonts } from "../utils/custom-fonts";
 import { onLive } from "../utils/live";
+import { type ActionNotice, noticeStillValid } from "../utils/share-approval";
 import { type ShareLanguage, SHARE_LANGUAGES, errorText, formatWhen, isShareLanguage, shareStrings } from "../utils/share-i18n";
 
 /*
@@ -129,12 +130,21 @@ function ApprovalPanel({ base, approval, language, onDone, inSheet }: {
   const [comment, setComment] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [actionNotice, setNotice] = useState<ActionNotice | null>(null);
   const [busy, setBusy] = useState<"sending" | "downloading" | null>(null);
   const latest = approval.latest;
   const current = latest?.revision === approval.revision ? latest : null;
   const ack = approval.acknowledgements?.[language] ?? approval.acknowledgement ?? null;
   const downloadable = approval.downloadable === true;
+  // A new revision (or a change request) blocks the download: "downloaded,
+  // download again any time" must not linger then.
+  const notice = noticeStillValid(actionNotice, { revision: approval.revision, downloadable }) ? actionNotice.text : null;
+  const downloadOpen = mode === "download";
+  useEffect(() => {
+    if (downloadOpen && !downloadable) {
+      setMode(null);
+    }
+  }, [downloadOpen, downloadable]);
 
   const open = (next: Mode) => {
     setMode(next);
@@ -153,7 +163,7 @@ function ApprovalPanel({ base, approval, language, onDone, inSheet }: {
       setError(result.error);
       return false;
     }
-    setNotice(t.downloaded);
+    setNotice({ text: t.downloaded, revision: approval.revision });
     return true;
   };
 
@@ -199,7 +209,7 @@ function ApprovalPanel({ base, approval, language, onDone, inSheet }: {
       } else {
         // The approval stands; the download can be tried again from here.
         setMode("download");
-        setNotice(t.approvedNowDownload);
+        setNotice({ text: t.approvedNowDownload, revision: approval.revision });
       }
       return;
     }
