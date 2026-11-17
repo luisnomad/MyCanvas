@@ -26,14 +26,8 @@ services:
       MYCANVAS_PUBLIC_URL: ${MYCANVAS_PUBLIC_URL:-}
       # Agent API bearer token (docs/AGENT_API.md); unset = agent API off.
       MYCANVAS_AGENT_TOKEN: ${MYCANVAS_AGENT_TOKEN:-}
-      # Editor link in notifications (default https://canva.local).
+      # Editor link in share-link notifications (default https://canva.local).
       MYCANVAS_EDITOR_URL: ${MYCANVAS_EDITOR_URL:-}
-      # Share-link notifications (docs/AGENT_API.md, "Notifications"); unset = none.
-      NOTIFY_TELEGRAM_BOT_TOKEN: ${NOTIFY_TELEGRAM_BOT_TOKEN:-}
-      NOTIFY_TELEGRAM_CHAT_ID: ${NOTIFY_TELEGRAM_CHAT_ID:-}
-      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
-      NOTIFY_WEBHOOK_TOPIC: ${NOTIFY_WEBHOOK_TOPIC:-}
-      NOTIFY_WEBHOOK_TOKEN: ${NOTIFY_WEBHOOK_TOKEN:-}
     volumes:
       - mycanvas-data:/data
 

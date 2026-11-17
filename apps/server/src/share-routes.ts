@@ -387,7 +387,7 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
       });
     }
     publish(found.ws, { type: "share.changed", id: found.record.designId });
-    void notify({ kind: decision, designId: found.design.id, designName: found.design.name, reviewer: name, revision: current, ...(comment ? { comment } : {}) });
+    void notify(found.ws, { kind: decision, designId: found.design.id, designName: found.design.name, reviewer: name, revision: current, ...(comment ? { comment } : {}) });
     return c.json({ review: added.review, approval: saved ? approvalFor(saved, found.design) : null }, 201, noStore);
   });
 
@@ -449,7 +449,7 @@ export function registerShareRoutes(app: Hono<AppEnv>, deps: ShareRouteDeps): vo
       ...requestOrigin(c.req.raw.headers),
     });
     publish(ws, { type: "share.changed", id: design.id });
-    void notify({ kind: "downloaded", designId: design.id, designName: design.name, reviewer: name, revision: current, sha256 });
+    void notify(ws, { kind: "downloaded", designId: design.id, designName: design.name, reviewer: name, revision: current, sha256 });
     return c.body(new Uint8Array(pdf), 200, {
       "Content-Type": "application/pdf",
       "Content-Disposition": contentDisposition(fileName),

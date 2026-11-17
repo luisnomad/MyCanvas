@@ -24,6 +24,7 @@ import { readAssetManifest, saveAsset } from "./assets-store";
 import { registerSourceFileRoute } from "./agent/render-routes";
 import { registerAgentRoutes } from "./agent/routes";
 import { type Identity, identify } from "./auth";
+import { registerNotifyRoutes } from "./notify-routes";
 import { registerShareRoutes } from "./share-routes";
 import { deleteShare } from "./shares";
 import {
@@ -656,6 +657,7 @@ app.put("/api/fonts/favorites", async (c) => {
 });
 
 registerAiRoutes(app);
+registerNotifyRoutes(app);
 registerAssetFolderRoutes(app, isSafeAssetFile);
 registerAgentRoutes(app, { isSafeAssetFile, listAssets });
 registerShareRoutes(app, { isSafeAssetFile, imageTypes: IMAGE_TYPES });
